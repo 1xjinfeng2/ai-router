@@ -226,3 +226,55 @@ curl -s http://<IP>/health                                                      
 
 **明文 HTTP 的取舍**：没有域名时无法签 Let's Encrypt，令牌会在链路上明文传输。要么给个域名走 443，要么只在可信网络/SSH 隧道内用，并定期换 `AI_ROUTER_SERVER_TOKEN`（改完 `.env` 后 `systemctl restart ai-router`）。
 
+## 加固记录：SSH 密钥与面板收敛（2026-11）
+
+生产机不要长期开 root 密码登录。加固顺序必须是「先验证密钥、再关密码」，否则可能把自己锁在门外（云控制台 VNC 仍可救）。
+
+**1. 部署公钥并先验证**
+
+```bash
+# 本地（有 ~/.ssh/id_ed25519.pub）
+ssh-copy-id -i ~/.ssh/id_ed25519.pub root@<IP>
+# 或手工写入 /root/.ssh/authorized_keys（700 目录、600 文件）
+
+# 关键：用纯密钥方式验证能登，再进行下一步
+ssh -o PasswordAuthentication=no -o PreferredAuthentications=publickey \
+    -i ~/.ssh/id_ed25519 root@<IP> 'echo KEY_OK'
+```
+
+**2. 关闭密码认证**
+
+OpenCloudOS 9 的配置由 `Include /etc/ssh/sshd_config.d/*.conf` 拼装，且 `50-cloud-init.conf` 里有 `PasswordAuthentication yes`。利用「首条匹配生效」放一个排序最前的 drop-in：
+
+```
+# /etc/ssh/sshd_config.d/00-hardening.conf
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+```
+
+改前备份 `sshd_config` 与 cloud-init drop-in，然后 `sshd -t` 校验、`systemctl reload sshd`。验证：密码方式应返回
+`Permission denied (publickey,...)`（认证列表里已无 password）。
+
+**3. 宝塔面板（8888）只允许回环，公网走 SSH 隧道**
+
+家庭/办公宽带多为动态公网 IP，按 IP 白名单会在换 IP 后锁死自己。更稳的做法是主机防火墙直接 DROP 掉外部到 8888 的流量，需要面板时开隧道。规则放进独立的 oneshot 服务做开机持久化，**不要改云镜（YunJing）自己的 ipset 链**：
+
+```bash
+# /usr/local/sbin/ai-router-firewall.sh（幂等：先 -C 探测再插入）
+iptables -C INPUT -p tcp --dport 8888 -i lo -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 8888 -i lo -j ACCEPT
+iptables -C INPUT -p tcp --dport 8888 ! -i lo -j DROP 2>/dev/null || iptables -I INPUT 2 -p tcp --dport 8888 ! -i lo -j DROP
+```
+
+本机建立隧道后，浏览器访问 `http://127.0.0.1:本地端口/安全入口`：
+
+```bash
+ssh -i ~/.ssh/id_ed25519 -N -L 18888:127.0.0.1:8888 root@<IP>
+# 浏览器开 http://127.0.0.1:18888/tencentcloud
+```
+
+验证口径：外网 `connect()` 8888 超时（DROP，非 reject）；80/22 正常；服务器本机 `curl 127.0.0.1:8888/...` 有应用层响应（404 也算通，是宝塔安全入口在起作用）。
+
+**回滚**：删掉 `00-hardening.conf` 并 `systemctl reload sshd` 即恢复密码登录；`systemctl disable --now ai-router-firewall` 后手动 `iptables -D` 对应两条规则即可恢复面板公网访问。
+
