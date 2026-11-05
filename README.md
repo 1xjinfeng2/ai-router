@@ -267,7 +267,8 @@ ai-router/
 │   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存）
 └── references/
     ├── models.md         # 供应商端点、模型清单、能力标签、核实状态
-    └── onboarding.md     # 接下来接入哪些 AI（优先级与免费额度）
+    ├── onboarding.md     # 接下来接入哪些 AI（优先级与免费额度）
+    └── github-setup.md   # 配置 GitHub 认证 / remote 并推送（含报错速查）
 ```
 
 ## 扩展新供应商
@@ -295,14 +296,28 @@ python scripts/package.py --output dist    # 输出到 dist/
 
 本技能以 **MIT 许可证**开源（见 [`LICENSE`](LICENSE)），欢迎提 Issue / PR 接入更多模型或改进路由策略。
 
-本地 Git 仓库已初始化在技能目录（`main` 分支，首个提交包含全部源码与文档）。推送到 GitHub：
+本地 Git 仓库已初始化在技能目录（`main` 分支，含全部源码与文档）。首次推送需要三件事：
+**配提交身份 → 在 GitHub 建空仓库 → 设置 remote 并认证**。
 
 ```bash
+# 1) 身份（邮箱建议用 GitHub 的 <ID>+<用户名>@users.noreply.github.com）
+git config --global user.name "你的名字"
+git config --global user.email "你的邮箱"
+
+# 2) 在 https://github.com/new 建一个**空**的 Public 仓库：
+#    不要勾选 Add a README / .gitignore / license，否则远端会与本地冲突
+
+# 3) 设置 remote 并推送（首次会弹浏览器登录 GitHub，由 Git Credential Manager 处理）
 cd ~/.workbuddy/skills/ai-router
 git remote add origin https://github.com/<你的用户名>/ai-router.git
 git push -u origin main
 ```
 
-> ⚠️ **安全**：`.env` 已被 `.gitignore` 排除，**切勿** `git add -f .env`。
+GitHub **已禁用账号密码认证**，可选 HTTPS + GCM（推荐，本机已自带）、SSH 密钥、`gh` CLI 三种方式；
+身份配置、SSH 授权、网络受限时的 443 端口方案、以及 `403` / `Permission denied (publickey)` /
+`fetch first` 等报错的处理，见 [`references/github-setup.md`](references/github-setup.md)。
+
+> ⚠️ **安全**：`.env` 已被 `.gitignore` 排除，**切勿** `git add -f .env`；
+> 也**不要**把 Token 拼进 remote 地址（会明文写进 `.git/config`）。
 > 若曾把真实 Key 写进任何文档或提交历史，推送前先到各家控制台轮换密钥。
 > 提交前可跑 `python scripts/package.py --check-only` 做一次密钥扫描。
