@@ -113,6 +113,24 @@ def extract_text(resp, mode):
     return resp["choices"][0]["message"]["content"]
 
 
+def extract_usage(resp, mode):
+    """Return {prompt_tokens, completion_tokens, total_tokens} from a raw resp."""
+    try:
+        if mode == "anthropic":
+            u = resp.get("usage", {}) or {}
+            inp = u.get("input_tokens", 0) or 0
+            out = u.get("output_tokens", 0) or 0
+            return {"prompt_tokens": inp, "completion_tokens": out, "total_tokens": inp + out}
+        u = resp.get("usage", {}) or {}
+        return {
+            "prompt_tokens": u.get("prompt_tokens", 0) or 0,
+            "completion_tokens": u.get("completion_tokens", 0) or 0,
+            "total_tokens": u.get("total_tokens", 0) or 0,
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def main():
     p = argparse.ArgumentParser(description="Unified LLM caller for multi-provider routing.")
     p.add_argument("--provider", required=True, choices=list(PROVIDERS.keys()))
@@ -166,6 +184,16 @@ def main():
                     "请增大 --max-tokens（例如 --max-tokens 1024）后重试。\n"
                 )
         print(text)
+
+    # Metering: record this call's token usage locally (best-effort).
+    try:
+        from usage import record as _record_usage
+        _u = extract_usage(resp, mode)
+        if _u:
+            _record_usage(args.provider, model, _u["prompt_tokens"],
+                          _u["completion_tokens"], _u["total_tokens"])
+    except Exception:  # noqa: BLE001
+        pass
 
 
 if __name__ == "__main__":

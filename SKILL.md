@@ -251,6 +251,7 @@ they are stored only in the local vault and excluded from git and from the zip.
 - `scripts/env_loader.py` — stdlib-only `.env` loader (zero dependencies)
 - `scripts/privacy.py` — local PII vault: redact / restore / manage (zero dependencies)
 - `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize → restore
+- `scripts/usage.py` — local usage metering + response cache: per-call token/cost tracking, `usage.py --report` (zero dependencies)
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
 - `references/onboarding.md` — which providers to add next, priority order, free-tier comparison
 - `.env.example` — API key template with sign-up URLs per provider

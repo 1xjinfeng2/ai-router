@@ -3,6 +3,8 @@
 
 # Local PII vault (privacy relay) — contains real redacted values, never commit
 privacy_vault.db
+# Local usage meter (token/cost tracking) — never commit
+usage.db
 *.db
 
 # Python cache

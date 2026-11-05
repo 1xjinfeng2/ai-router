@@ -12,6 +12,7 @@
 - 🪶 **零依赖**：调用脚本仅用 Python 标准库，无需 `pip install`
 - 🔍 **接入自检**：一条命令判断 Key 是否有效、站点/项目是否匹配、模型 ID 是否过期
 - 🗳️ **多模型对比 / 投票**：一键让多个模型同时回答并汇总
+- 📊 **费用与用量统计**：本地记录每次调用的 token 数与估算费用（CNY），相同请求可走缓存省额度
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -289,6 +290,43 @@ python scripts/privacy.py --clear-all             # 清空整个库
 
 > ⚠️ **安全边界**：隐私库是明文 SQLite 文件，与 `.env` 同等敏感——本机不要共享该文件；公开仓库前先 `privacy.py --clear-all`。它防的是"外部 AI 拿到你的隐私"，不防"本机被入侵 / 误提交"。
 
+## 费用与用量统计（Usage Metering）
+
+本地记录**每一次**模型调用的 token 用量与**估算费用**（CNY），让你对自己接的方舟 / TokenHub / DeepSeek 等多家付费 API 到底花了多少一目了然；并支持把**完全相同的请求**缓存到本地，第二次起直接命中缓存、不再消耗额度。所有数据只存在本机 `usage.db`（已 gitignore、不进包）。
+
+```bash
+# 中转站跑完会在 stderr 打印本轮用量；也可随时查看累计报表
+python scripts/usage.py --report
+
+# 导出 CSV（便于记账 / 报销）
+python scripts/usage.py --export usage-2026-11.csv
+
+# 启用响应缓存：相同 (provider+model+prompt+max_tokens) 第二次起免调用
+python scripts/relay.py --prompt "..." --providers doubao,th-flash --cache
+
+# 关闭本次计量（不写 usage.db）
+python scripts/relay.py --prompt "..." --no-meter
+
+# 清空全部计量与缓存
+python scripts/usage.py --clear
+```
+
+报表示例：
+
+```
+=== ai-router usage report ===
+provider      model                      calls       in      out    total        cost  hit
+------------------------------------------------------------------------------------------
+th-deepseek   deepseek-v4-pro-202606         1     1200      300     1500     ¥0.0084    0
+doubao        doubao-seed-evolving           2      850      420     1270     ¥0.0015    1
+th-flash      deepseek-v4.1-flash            1      760      510     1270     ¥0.0010    0
+------------------------------------------------------------------------------------------
+TOTAL                                        4     2810     1230     4040     ¥0.0109    1
+(cache hits saved an estimated 1 API call(s))
+```
+
+**关于价格**：`scripts/usage.py` 顶部的 `PRICES` 表是**近似值**（CNY / 每 1M token，in/out），按 2026-11-05 各家公开定价整理，仅供估算。token 数是各家 API 返回的真实值（精确），只有金额是估算。请按你实际签约价修改 `PRICES`；表里没有的模型会显示 `n/a`。
+
 ## 接下来接入哪些 AI
 
 **结论：不用一家家装。** 方舟 + TokenHub 两个 Key 已实测覆盖豆包 / 混元 Hy4 /
@@ -320,7 +358,8 @@ ai-router/
 │   ├── env_loader.py     # 纯标准库 .env 加载器
 │   ├── privacy.py        # 本地隐私库：脱敏 / 还原 / 管理（零依赖）
 │   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总 → 还原
-│   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 隐私库）
+│   ├── usage.py          # 本地用量计量 + 响应缓存（token/费用统计，零依赖）
+│   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 隐私库 / 计量库）
 └── references/
     ├── models.md         # 供应商端点、模型清单、能力标签、核实状态
     ├── onboarding.md     # 接下来接入哪些 AI（优先级与免费额度）
