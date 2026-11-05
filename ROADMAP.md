@@ -40,13 +40,17 @@
 4. ✅ 可选加密：`cryptography` + `AI_ROUTER_VAULT_PASSPHRASE` → PBKDF2(200k)+Fernet，`enc:v1:` 前缀，`--encrypt/--decrypt`；无依赖时优雅降级并明确提示
 
 ### Phase 2 · 质量保障（已完成 ✅）
-5. ✅ 单测：`tests/` 64 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
-6. ✅ GitHub Actions CI：Python 3.9 / 3.12 双版本，编译 + 单测 + `package.py --check-only` + 脱敏冒烟
+5. ✅ 单测：`tests/` 94 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
+6. ✅ GitHub Actions CI：Python 3.10 / 3.13 双版本（runner 固定 `ubuntu-24.04`），编译 + 单测 + `package.py --check-only` + 脱敏冒烟
 
 ### Phase 3 · 体验增强（已完成 ✅）
 7. ✅ 流式输出：`call_model.py --stream`（OpenAI/Anthropic 双 SSE 分支）、`relay.py --stream --no-organize`；`privacy.StreamRestorer` 处理跨 chunk 占位符
 8. ✅ 打分投票：`relay.py --vote`（仅 ≥2 路时启用，裁判模型按 1-10 打分并返回最优，评分表打到 stderr，裁判调用计费入 usage）
 9. ✅ 观测量化与反哺：usage 新增 `latency_ms/error/fallback_from` 字段、`--health` 成功率报表、`judge.health_adjusted()` 把成功率 <60% 且调用 ≥3 次的供应商降权
+
+### Phase 4 · 自动化（已完成 ✅）
+10. ✅ 自我更新：`scripts/update.py --check/--apply`，版本比对（git / HTTPS 降级）、脏工作区拦截（退出码 3）、快进拉取、拉后跑全量测试、失败 `git reset --hard` 回滚（退出码 4）、`--zip` 顺便重打包
+11. ✅ 每周自动迭代：定时任务在无人值守下按「挑一个 ROADMAP 开放项 → 改代码 + 补测试 → 全绿才提交推送 → 写记录」循环，红则不留痕
 
 ### 仍开放（按价值排序）
 - [ ] 加密默认开启的引导流程（首次运行提示设置口令）
@@ -54,3 +58,9 @@
 - [ ] 流式接入汇总链路（当前 organizer 需完整文本）
 - [ ] Ollama 本地模型接入（评审未提及，待以上稳定后评估）
 - [ ] Web UI（9/9 一致后置）
+
+## 四、自动迭代记录
+
+格式：`YYYY-MM-DD | 提交 | 改了什么 | 测试数 | 未做`
+
+- 2026-11-05 | 92f50bb | 新增自我更新（版本比对/脏工作区拦截/测试门+回滚），CI 矩阵 3.9/3.12 → 3.10/3.13 | 94 | 加密引导、投票加权、汇总流式
