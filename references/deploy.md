@@ -194,3 +194,35 @@ python scripts/ask.py --prompt "嗯" --dry-run    # 应看到 provider=custom
 ```
 
 `custom` 挂了会自动降级到 `th-flash → doubao`，不会因为 GPU 机器重启就断服务。
+
+## 实战记录：腾讯云 OpenCloudOS 9.6（2026-11）
+
+一次真实部署踩到的坑，重装时照这份走可以省时间：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 从外网连 `:8787` 超时，本机 `curl 127.0.0.1` 正常 | 腾讯云**安全组**没放行 8787（主机 iptables 是空的，firewalld 也没运行） | 先探测安全组放行了哪些端口：能连上但无人监听会返回 `ConnectionRefused`，说明放行；超时说明被拦。本例 80/443 已放行且无服务占用，于是改监听 80 |
+| 想让非 root 用户监听 80 | 1024 以下端口需要特权 | unit 里只加 `AmbientCapabilities=CAP_NET_BIND_SERVICE` + `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`，其余能力全部收掉 |
+| 服务能答，但 `/usage` 永远是 0，日志报 `attempt to write a readonly database` | 以 root 跑过一次测试，`usage.db` 变成 root 属主；服务账号是 `airouter` | 用服务账号跑测试；升级后再 `chown -R airouter:airouter /opt/ai-router`。也可用 `AI_ROUTER_USAGE_DB` 把库放到别处 |
+| 服务器 `git clone github.com` 超时（RPC failed / curl 28） | 国内机房到 GitHub 不稳定 | 在本地打包后 `scp ai-router.zip` 上去解包；`update.py` 的 HTTP 降级同样会失败，升级统一从本地推 |
+| 远端调用带图片时 400 `image not found on server` | 客户端只发了本地路径 | 1.6.1 起客户端自动转 base64 `data:` URL；服务端单图上限 6M 字符、单请求 8 张、body 上限 8 MiB |
+
+部署后的标准自检（在服务器上）：
+
+```bash
+systemctl is-active ai-router        # active
+systemctl is-enabled ai-router       # enabled（开机自启）
+curl -s localhost/health             # version / providers_configured / auth:true
+ss -tlnp | grep ':80 '               # 只有我们的 python3
+journalctl -u ai-router -n 20 -o cat # 不应出现任何提示词内容
+```
+
+从外部再验一遍鉴权，避免只测了回环：
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://<IP>/ask -d '{"prompt":"hi"}'   # 401
+curl -s http://<IP>/health                                                              # 200
+```
+
+**明文 HTTP 的取舍**：没有域名时无法签 Let's Encrypt，令牌会在链路上明文传输。要么给个域名走 443，要么只在可信网络/SSH 隧道内用，并定期换 `AI_ROUTER_SERVER_TOKEN`（改完 `.env` 后 `systemctl restart ai-router`）。
+
