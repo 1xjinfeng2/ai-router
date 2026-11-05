@@ -18,7 +18,8 @@
 - 🖼️ **图片理解**：`--image` 直接附本地图片（png/jpg/webp/gif/bmp），自动走视觉模型，无需单独上传接口
 - 🛡️ **失败重试 + 跨模型降级**：限流/5xx 指数退避重试，401/402 立即切备用模型，推理模型空正文自动扩容重试
 - 🌊 **流式输出**：`--stream` 边生成边打印，隐私占位符跨 chunk 也能正确还原
-- 🧪 **82 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、打包密钥扫描全覆盖
+- 🔄 **自动更新**：`update.py --check/--apply` 升级到新版，拉取后自动跑测试，失败即回滚到原提交，绝不把技能搞坏
+- 🧪 **94 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、自我更新回滚、打包密钥扫描全覆盖
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -475,19 +476,45 @@ python scripts/privacy.py --restore --session <sid> --text "<PII_PHONE_1>"   # �
 
 没装 `cryptography` 时不会报错崩溃，而是明确提示「加密不可用」并保持明文——保证零依赖安装仍能正常工作。⚠️ 口令丢失 = 数据无法恢复；加密防的是「库文件被拷走」，不防本机被入侵。
 
+## 自动更新
+
+装在多台机器上、发给同事、或者你自己改了本地文件之后，最大的风险不是"没更新"，而是"更新把能用的版本弄坏了"。`scripts/update.py` 就是为这件事写的：
+
+```bash
+python scripts/update.py --check          # 只看有没有新版
+# [update] local  : 1.4.0
+# [update] remote : 1.5.0 (git)
+# [update] 3 commit(s) behind - run with --apply to update
+#           6906340 docs: note why CI pins ubuntu-24.04
+# 退出码：0 已是最新 · 1 有新版 · 2 出错 · 3 工作区有未提交改动
+
+python scripts/update.py --apply          # 拉取 + 跑全量测试
+python scripts/update.py --apply --zip D:/dist   # 顺便重打包分发包
+```
+
+它按这个顺序保证安全：
+
+1. **工作区脏就罢工**（退出码 3），一个字节都不改 —— 你的本地修改不会被覆盖；
+2. `git pull --ff-only`，绝不产生合并提交，历史永远线性；
+3. 拉完立刻跑 `compileall` + 全量单测；
+4. **测试失败就 `git reset --hard` 回到你原来的提交**（退出码 4），宁可停在旧版，也不留一个跑不起来的技能；
+5. `--no-test` 可以跳过第 3-4 步换速度，但也就放弃了回滚保护。
+
+没有 git（比如别人直接解压了 zip）时，它会退化成读 GitHub 上的 `SKILL.md` 比对版本号，只报"有没有新版"，不下载任何东西 —— 这种情况按提示手动换 zip 即可。
+
 ## 测试与 CI
 
 ```bash
-python -m unittest discover -s tests -v     # 82 项单测，全部标准库 unittest
+python -m unittest discover -s tests -v     # 94 项单测，全部标准库 unittest
 python -m compileall -q scripts tests       # 语法检查
 python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
 ```
 
 覆盖范围：脱敏↔还原往返（含跨 chunk 流式还原）、严格模式姓名/地址、TTL 过期、加密往返、错误分类、退避重试、跨模型降级、推理模型 token 扩容、缓存键敏感性、计量聚合、健康度统计、打包排除与密钥扫描误报。
 
-CI：`.github/workflows/ci.yml` 在 Python 3.9 / 3.12 双版本跑「编译 + 单测 + 打包校验 + 脱敏冒烟」，任何一步失败即红。
+CI：`.github/workflows/ci.yml` 在 Python 3.10 / 3.13 双版本跑「编译 + 单测 + 打包校验 + 脱敏冒烟」，任何一步失败即红。
 
-> Runner 固定为 `ubuntu-24.04`，不用 `ubuntu-latest`。GitHub 已把 `ubuntu-latest` 迁到 Ubuntu 26.04，而官方 Python 构建只提供到 24.04，`ubuntu-latest` 上 3.9 会在 `setup-python` 一步直接报 `version '3.9' was not found for Ubuntu 26.04`——和我们代码无关。Python 3.9 已于 2025-10 停止维护，后续可考虑把矩阵换成 3.10 / 3.13。
+> Runner 固定为 `ubuntu-24.04`，不用 `ubuntu-latest`。GitHub 已把 `ubuntu-latest` 迁到 Ubuntu 26.04，而官方 Python 构建只提供到 24.04，在 `ubuntu-latest` 上装 3.9 会在 `setup-python` 一步直接报 `version '3.9' was not found for Ubuntu 26.04`——和代码无关。Python 3.9 已于 2025-10 停止维护，矩阵随之为 3.10 / 3.13。
 
 ## 接下来接入哪些 AI
 
@@ -522,17 +549,19 @@ ai-router/
 │   ├── privacy.py        # 本地隐私库：脱敏 / 还原 / TTL / 可选加密 / 流式还原
 │   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总/投票 → 还原
 │   ├── usage.py          # 本地用量计量 + 响应缓存 + 健康度报表
+│   ├── update.py         # 自我更新：版本比对、脏工作区保护、拉取后测试、失败回滚
 │   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 各类 .db）
-├── tests/                # 82 项标准库单测（无需任何依赖）
+├── tests/                # 94 项标准库单测（无需任何依赖）
 │   ├── test_privacy.py   # 脱敏↔还原、TTL、加密、流式还原
 │   ├── test_call_model.py# 错误分类、退避重试、跨模型降级、token 扩容
 │   ├── test_usage.py     # 计量聚合、缓存键、健康度、过期清理
 │   ├── test_judge.py     # 路由分类、健康度降权
 │   ├── test_ask.py       # 自动模式：路由决策、误判回归、CLI
 │   ├── test_package.py   # 打包排除与密钥扫描
-│   └── test_registry.py  # 供应商表 / 路由 / 降级链的一致性校验
+│   ├── test_registry.py  # 供应商表 / 路由 / 降级链的一致性校验
+│   └── test_update.py    # 版本比对、脏工作区拦截、快进拉取、测试失败回滚
 ├── .github/workflows/
-│   └── ci.yml            # Python 3.9/3.12：编译 + 单测 + 打包校验 + 脱敏冒烟
+│   └── ci.yml            # Python 3.10/3.13：编译 + 单测 + 打包校验 + 脱敏冒烟
 └── references/
     ├── free-tier.md      # 免费额度领取清单（额度 / 限速 / 环境变量 / 不接入理由）
     ├── models.md         # 供应商端点、模型清单、能力标签、核实状态

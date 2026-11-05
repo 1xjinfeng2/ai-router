@@ -10,12 +10,14 @@ jobs:
     # Pinned on purpose, not ubuntu-latest: ubuntu-latest now resolves to
     # Ubuntu 26.04, and actions/python-versions ships no Python 3.9 build for
     # 26.04 (only 20.04 / 22.04 / 24.04), so setup-python fails before a single
-    # line of our code runs. 24.04 still has both 3.9 and 3.12 builds.
+    # line of our code runs. 24.04 has builds for every version in the matrix.
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12"]
+        # 3.10 = oldest still-supported CPython; 3.13 = the version the skill is
+        # developed on. 3.9 is EOL (2025-10) and no longer tested.
+        python-version: ["3.10", "3.13"]
 
     steps:
       - uses: actions/checkout@v5

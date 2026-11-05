@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.4.0
+version: 1.5.0
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -374,6 +374,31 @@ bank card, IPv4, QQ, plus any `--custom` terms. **`--strict`** adds heuristic
 name/address matching (may over-redact). Placeholders look like `PII_EMAIL_1`;
 they are stored only in the local vault and excluded from git and from the zip.
 
+## Self-Update / 自动更新
+
+Copies drift: the one on a laptop is a week behind, the one someone unzipped has
+no VCS at all. `scripts/update.py` makes staying current one command, and makes
+it safe by refusing to lose work.
+
+```bash
+python scripts/update.py --check         # 0 current · 1 update available · 2 error · 3 dirty
+python scripts/update.py --apply         # git pull --ff-only, then run the tests
+python scripts/update.py --apply --zip D:/dist   # ... and rebuild the distributable zip
+```
+
+Rules it enforces:
+
+- a dirty working tree aborts with exit 3 and modifies nothing;
+- after the pull the full test suite runs; on any failure it `git reset --hard`
+  back to the exact commit you were on (exit 4), so a bad upstream commit can
+  never leave the skill broken;
+- when git or SSH is unavailable it falls back to reading `SKILL.md` over HTTPS
+  and compares version numbers only — nothing is downloaded;
+- `--no-test` skips the gate (faster, but you give up the rollback guarantee).
+
+**Run it when** the user asks 有没有新版本 / 更新一下 / 自动更新 / "update
+yourself", or before work where a known upstream fix matters.
+
 ## Resources
 
 - `scripts/ask.py` — **one-command auto mode**: judge → pick best configured model → answer, with retry/fallback and metering
@@ -384,8 +409,9 @@ they are stored only in the local vault and excluded from git and from the zip.
 - `scripts/privacy.py` — local PII vault: redact / restore / TTL / optional encryption / stream restore
 - `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize or vote → restore
 - `scripts/usage.py` — local usage metering + response cache + provider health report (`--report`, `--health`, `--expire`)
-- `tests/` — 64 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, packaging)
-- `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.9/3.12
+- `scripts/update.py` — self-update from the git remote: version compare, dirty-tree guard, pull + test gate, auto rollback (`--check` / `--apply`)
+- `tests/` — 94 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, packaging)
+- `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.10/3.13 (runner pinned to ubuntu-24.04)
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
 - `references/free-tier.md` — 免费额度领取清单：额度、限速、环境变量、不接入的理由（GitHub Models 已下线等）
 - `references/onboarding.md` — which providers to add next, priority order, free-tier comparison
@@ -394,7 +420,7 @@ they are stored only in the local vault and excluded from git and from the zip.
 ## Verify Before Shipping
 
 ```bash
-python -m unittest discover -s tests -v   # 82 tests, stdlib only
+python -m unittest discover -s tests -v   # 94 tests, stdlib only
 python -m compileall -q scripts tests
 python scripts/package.py --check-only    # structure + secret scan
 ```
