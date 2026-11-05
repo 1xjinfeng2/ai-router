@@ -1,7 +1,7 @@
 ---
 name: ai-router
 display_name: "AI 路由器 / AI Router"
-description: 'Acts as a judge that classifies every incoming question by task type and dispatches it to the single most capable AI model for that job, drawing on Doubao (火山方舟), DeepSeek, Kimi (Moonshot), Qwen (通义千问), GLM (智谱), Hunyuan (腾讯混元), Gemini (Google), OpenAI (GPT) and Claude (Anthropic). Use this skill when the user wants the "best" or "smartest" AI to answer, asks to compare or vote across models, or explicitly names a model/provider (e.g. 豆包, GPT, Claude, Kimi, 通义, DeepSeek, 智谱, 文心). 触发词：AI路由, 最强AI, 路由AI, 多模型, 模型投票, 问豆包, 问GPT, 用最好的AI, ai-router, best AI, route this, which AI, 哪个AI最好, 集成回答, 让多个AI.'
+description: 'Acts as a judge that classifies every incoming question by task type and dispatches it to the single most capable AI model for that job, drawing on Doubao (火山方舟), DeepSeek, Kimi (Moonshot), Qwen (通义千问), GLM (智谱), Hunyuan (腾讯混元), Gemini (Google), OpenAI (GPT) and Claude (Anthropic). It can also act as a privacy relay: redact PII into local-vault placeholders, fan the sanitized prompt out to multiple AIs, merge their answers, then restore the real values for the user. Use this skill when the user wants the "best" or "smartest" AI to answer, asks to compare or vote across models, or explicitly names a model/provider (e.g. 豆包, GPT, Claude, Kimi, 通义, DeepSeek, 智谱, 文心), or wants a privacy-preserving middleman that strips personal data before calling any AI. 触发词：AI路由, 最强AI, 路由AI, 多模型, 模型投票, 问豆包, 问GPT, 用最好的AI, ai-router, best AI, route this, which AI, 哪个AI最好, 集成回答, 让多个AI, 隐私中转, 隐私脱敏, PII脱敏, 中转站, 脱敏后调用AI, 多AI汇总, privacy relay.'
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
@@ -200,12 +200,57 @@ Outputs JSON: `{task_type, reason, recommended:{provider,model}, ranked_provider
 3. Add the key to `.env.example` and to `references/models.md`.
 4. Update the Expert Routing Table above and `ROUTING` / key map in `judge.py`.
 
+## Privacy Relay / 隐私中转站
+
+You (WorkBuddy) act as the middleman. When a prompt contains personal data
+(names, phones, emails, ID numbers, cards, addresses…), the relay stores the real
+values in a **local SQLite vault** (`privacy_vault.db`, git-ignored, never packaged),
+replaces them with opaque placeholders, sends only the sanitized text to the AIs,
+then merges their answers and restores the real values for the human who owns them.
+External AIs **never** see raw PII.
+
+```bash
+# Auto-route to the top-2 models, polish the merged answer, restore PII for you
+python scripts/relay.py --prompt "帮客户张伟(电话13800138000)写封跟进邮件"
+
+# Fan out to explicit providers; skip the polish pass
+python scripts/relay.py --prompt "..." --providers doubao,th-flash --no-organize
+
+# Run every configured provider, then merge
+python scripts/relay.py --prompt "..." --all
+
+# Heuristic name/address redaction (opt-in; default set is high-confidence only)
+python scripts/relay.py --prompt "..." --strict
+
+# Continue the same confidential thread (reuse the vault session)
+python scripts/relay.py --prompt "..." --session <session_id>
+```
+
+Pipeline: `redact → fan-out(N providers) → organize(1 model) → restore → output`.
+The organizer is instructed to keep every placeholder verbatim, so restore is exact.
+
+Vault management (all local, owner-only):
+
+```bash
+python scripts/privacy.py --list                 # list sessions + redaction counts
+python scripts/privacy.py --export --session <id> # audit a session's mappings
+python scripts/privacy.py --clear  --session <id> # delete one session
+python scripts/privacy.py --clear-all             # wipe the whole vault
+```
+
+Detection levels: **default** redacts email, CN mobile, 18-digit ID, 16–19 digit
+bank card, IPv4, QQ, plus any `--custom` terms. **`--strict`** adds heuristic
+name/address matching (may over-redact). Placeholders look like `PII_EMAIL_1`;
+they are stored only in the local vault and excluded from git and from the zip.
+
 ## Resources
 
 - `scripts/call_model.py` — unified OpenAI-compatible caller for all providers
 - `scripts/judge.py` — task classifier and model recommender
 - `scripts/check_provider.py` — provider diagnostics and available-model discovery (`--scan`)
 - `scripts/env_loader.py` — stdlib-only `.env` loader (zero dependencies)
+- `scripts/privacy.py` — local PII vault: redact / restore / manage (zero dependencies)
+- `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize → restore
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
 - `references/onboarding.md` — which providers to add next, priority order, free-tier comparison
 - `.env.example` — API key template with sign-up URLs per provider

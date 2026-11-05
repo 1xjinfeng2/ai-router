@@ -25,7 +25,7 @@ EXCLUDE_DIRS = {
     ".git", "__pycache__", ".venv", "venv", ".idea", ".vscode",
     "dist", "build", ".pytest_cache", ".mypy_cache",
 }
-EXCLUDE_NAMES = {".env", ".DS_Store", "Thumbs.db"}
+EXCLUDE_NAMES = {".env", ".DS_Store", "Thumbs.db", "privacy_vault.db"}
 EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".zip", ".log", ".bak"}
 
 # Coarse but effective: real keys are long random strings. Short placeholders

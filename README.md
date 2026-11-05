@@ -235,6 +235,60 @@ python scripts/call_model.py --provider hunyuan --model hy-vision-2.0-instruct -
 > 模型 ID 带日期后缀且周级迭代，`/models` 里列出的也不保证都有权限
 > （例如 `doubao-seed-2-0-code-preview-260215` 实测 404）。变更前用 `--scan` 复核。
 
+## 隐私中转站（Privacy Relay）
+
+把 WorkBuddy 变成**隐私代理**：发来的内容里含姓名 / 电话 / 邮箱 / 身份证 / 银行卡 / 地址等敏感信息时，**只把真值存进本机 SQLite 隐私库，对外只发占位符文本**，多家 AI 在脱敏状态下并行处理，结果由另一个模型汇总润色后，再把占位符还原成你的真实信息再输出。外部 AI **全程看不到任何真实 PII**。
+
+```mermaid
+flowchart LR
+    U[用户请求 含PII] --> R[redact 脱敏]
+    R --> V[(本机隐私库<br/>真值↔占位符)]
+    R --> F[fan-out 并行调用多家AI]
+    F --> O[organize 汇总润色]
+    V --> O
+    O --> Re[restore 还原真值]
+    Re --> Y[输出给你]
+```
+
+```bash
+# 自动路由到 top-2 模型 → 汇总 → 还原 PII
+python scripts/relay.py --prompt "帮客户张伟(电话13800138000)写封跟进邮件"
+
+# 显式指定两家并发，跳过汇总（直接拼接）
+python scripts/relay.py --prompt "..." --providers doubao,th-flash --no-organize
+
+# 跑所有已配置供应商再合并
+python scripts/relay.py --prompt "..." --all
+
+# 启发式姓名/地址脱敏（默认只做高置信检测）
+python scripts/relay.py --prompt "..." --strict
+
+# 自定义必脱敏词（如内部代号）
+python scripts/relay.py --prompt "..." --custom "张三,项目代号X"
+
+# 复用同一隐私库会话（同一机密话题的连续对话）
+python scripts/relay.py --prompt "..." --session <session_id>
+```
+
+**管线**：`脱敏 → 多家并发 → 汇总润色 → 还原 → 输出`。汇总模型被明确要求**原样保留所有占位符**，因此还原是精确的。
+
+**本地隐私库管理**（全部本机、仅属主可见）：
+
+```bash
+python scripts/privacy.py --list                 # 列出会话与脱敏计数
+python scripts/privacy.py --export --session <id> # 审计某会话的映射
+python scripts/privacy.py --clear  --session <id> # 删除单个会话
+python scripts/privacy.py --clear-all             # 清空整个库
+```
+
+**检测等级**
+- **默认（高置信）**：邮箱、手机号（CN）、18 位身份证、16–19 位银行卡、IPv4、QQ 号，以及 `--custom` 指定的任意词。
+- **`--strict`**：追加启发式姓名 / 地址匹配（可能过度脱敏，适合已知含姓名地址的场景）。
+
+占位符形如 `PII_EMAIL_1`，**只存在于本机隐私库**，已被 `.gitignore` 排除、也不会进入打包 zip。
+
+> ⚠️ **安全边界**：隐私库是明文 SQLite 文件，与 `.env` 同等敏感——本机不要共享该文件；公开仓库前先 `privacy.py --clear-all`。它防的是"外部 AI 拿到你的隐私"，不防"本机被入侵 / 误提交"。
+
 ## 接下来接入哪些 AI
 
 **结论：不用一家家装。** 方舟 + TokenHub 两个 Key 已实测覆盖豆包 / 混元 Hy4 /
@@ -264,7 +318,9 @@ ai-router/
 │   ├── judge.py          # 任务分类与模型推荐
 │   ├── check_provider.py # 接入自检 / 列出可用模型 ID
 │   ├── env_loader.py     # 纯标准库 .env 加载器
-│   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存）
+│   ├── privacy.py        # 本地隐私库：脱敏 / 还原 / 管理（零依赖）
+│   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总 → 还原
+│   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 隐私库）
 └── references/
     ├── models.md         # 供应商端点、模型清单、能力标签、核实状态
     ├── onboarding.md     # 接下来接入哪些 AI（优先级与免费额度）
