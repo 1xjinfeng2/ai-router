@@ -81,6 +81,14 @@ KEYWORDS = {
 # Providers whose calls are covered by a permanent free tier (no card).
 FREE_PROVIDERS = ["glm-flash", "siliconflow", "groq", "openrouter", "mistral", "nvidia"]
 
+# Providers that have NO usable free tier for individual users: they require a
+# bound payment method (openai, claude) or prepaid balance (deepseek's direct
+# DEEPSEEK_API_KEY line), so the auto-router skips them by default. An explicit
+# `--provider <name>` still works for deliberate paid use.
+# Note: only the *direct* `deepseek` line is excluded. The Aliyun/Ark aliases
+# `th-deepseek` / `ark-deepseek` keep their own free quotas and stay enabled.
+PAID_PROVIDERS = {"openai", "claude", "deepseek"}
+
 # A self-hosted endpoint (vLLM / Ollama / gateway) is opt-in per task type. By
 # default it only serves low-stakes "cheap" questions, so an OOM on the GPU box
 # can never ruin a real deliverable. Override with
@@ -136,7 +144,7 @@ def default_model(provider):
 def pick_judge_provider(configured):
     """Pick a configured provider for semantic classification (cheap + available)."""
     for p in ("doubao", "deepseek", "qwen", "glm", "openai", "claude"):
-        if p in configured:
+        if p in configured and p not in PAID_PROVIDERS:
             return p
     return "deepseek"
 

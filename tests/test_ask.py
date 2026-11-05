@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import ask  # noqa: E402
 import judge  # noqa: E402
+import call_model  # noqa: E402
 
 CONFIGURED = {"doubao", "th-code", "th-deepseek", "th-flash", "th-kimi",
               "th-glm", "th-vision", "ark-deepseek", "ark-kimi", "deepseek"}
@@ -158,6 +159,59 @@ class RemoteModeTests(unittest.TestCase):
         with mock.patch.object(ask, "_post_json", fake_post):
             ask.answer("你好", remote="http://x:1")
         self.assertNotIn("images", sent["payload"])
+
+
+class PaidExclusionTests(unittest.TestCase):
+    """Auto-routing must never select a provider that has no free tier."""
+    PAID = {"openai", "claude", "deepseek"}
+    FULL = {"openai", "claude", "deepseek", "doubao", "th-code", "th-kimi",
+            "th-deepseek", "th-flash", "th-glm", "th-vision", "ark-deepseek",
+            "ark-kimi", "ark-glm", "kimi", "qwen", "glm", "hunyuan", "gemini",
+            "ernie", "glm-flash", "siliconflow", "groq", "openrouter",
+            "mistral", "nvidia"}
+
+    def setUp(self):
+        p = mock.patch.object(judge, "configured_providers",
+                              return_value=set(self.FULL))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_no_paid_provider_in_any_route(self):
+        prompts = [
+            "帮我写一段 Python 代码",
+            "把这段会议通知润色成中文",
+            "帮我证明哥德巴赫猜想",
+            "总结这篇 50 页文档",
+            "描述这张图片的内容",
+            "查一下最新的政策变化",
+        ]
+        for prompt in prompts:
+            _, _, ranked = ask.route(prompt)
+            self.assertTrue(ranked, f"route for {prompt!r} returned nothing")
+            overlap = set(ranked) & self.PAID
+            self.assertFalse(overlap, f"{prompt!r} routed to paid: {overlap}")
+
+    def test_paid_aliases_with_free_quota_still_routed(self):
+        # th-deepseek / ark-deepseek keep a free quota and must remain usable.
+        _, _, ranked = ask.route("帮我证明这个数学猜想")
+        self.assertIn("th-deepseek", ranked)
+        self.assertIn("ark-deepseek", ranked)
+        self.assertNotIn("deepseek", ranked)
+
+
+class ExplicitPaidProviderTests(unittest.TestCase):
+    """An explicit --provider must still reach a paid model on deliberate use."""
+    def test_explicit_provider_overrides_paid_exclusion(self):
+        fake = {"text": "x", "provider": "openai", "model": "gpt-5.1",
+                "error": None, "usage": {}, "attempted": [],
+                "fallback_from": None}
+        with mock.patch.object(call_model, "call_text", return_value=fake) as m, \
+                mock.patch.object(judge, "configured_providers",
+                                  return_value={"openai"}):
+            res = ask.answer("hi", provider="openai")
+        m.assert_called_once()
+        self.assertEqual(m.call_args.args[0], "openai")
+        self.assertEqual(res["provider"], "openai")
 
 
 if __name__ == "__main__":

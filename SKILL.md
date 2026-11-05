@@ -68,6 +68,13 @@ the answer. stdout carries only the answer; routing and cost notes go to stderr.
 | `--no-fallback` | do not degrade to another provider when the top one fails |
 | `--budget` | only consider permanent free-tier lines (GLM-4.7-Flash, SiliconFlow, Groq, OpenRouter, Mistral, NVIDIA) |
 
+**No-paid-by-default.** Auto-routing never picks a provider that has no usable
+free tier: `openai` (card required), `claude` (prepaid only), and the direct
+`deepseek` line (`DEEPSEEK_API_KEY` has no free quota). These are skipped even
+when their keys are configured. Aliases that *do* carry free quotas stay on:
+`th-deepseek` / `ark-deepseek`. To deliberately use a paid model, pass
+`--provider openai` explicitly — that is treated as a deliberate choice.
+
 **Operating rules for the agent**
 
 1. Any substantive question → run `ask.py` (or judge + `call_model.py`), then

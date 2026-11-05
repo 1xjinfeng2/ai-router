@@ -66,6 +66,11 @@ def route(prompt, use_llm=False, judge_provider=None, task_override=None, budget
         # providers have no key. Fall back to any configured provider.
         ranked = [p for p in GENERIC_ORDER if p in configured]
         reason += "; fell back to generic order"
+    # Never spend money on a provider that has no free tier. Explicit
+    # `--provider` overrides this (see answer()), but auto-routing won't.
+    if any(p in judge.PAID_PROVIDERS for p in ranked):
+        ranked = [p for p in ranked if p not in judge.PAID_PROVIDERS]
+        reason += "; excluded paid-only providers (no free tier)"
     if budget:
         # Keep the task-appropriate free line when one exists, otherwise take
         # whatever free line is configured.
@@ -175,7 +180,7 @@ def answer(prompt, system=None, task=None, provider=None, model=None,
         task_type, reason, ranked = routing
     else:
         task_type, reason, ranked = route(prompt, use_llm, judge_provider, override, budget)
-    if not ranked:
+    if not ranked and not provider:
         raise AskError("no provider has an API key configured. Fill .env "
                        "(see .env.example) or run check_provider.py --scan.", code=2)
 
@@ -240,7 +245,7 @@ def main(argv=None):
     task, reason, ranked = route(args.prompt, args.use_llm, args.judge_provider,
                                  override, args.budget)
 
-    if not ranked and not remote:
+    if not ranked and not remote and not args.provider:
         if args.budget:
             sys.stderr.write(
                 "[ask] no free-tier provider configured. Add one of ZHIPU_API_KEY, "
@@ -252,7 +257,7 @@ def main(argv=None):
             "Fill .env (see .env.example) or run check_provider.py --scan.\n")
         sys.exit(2)
 
-    provider = ranked[0] if ranked else None
+    provider = args.provider or (ranked[0] if ranked else None)
     model = args.model or (judge.default_model(provider) if provider else None)
 
     if args.dry_run:
