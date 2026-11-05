@@ -27,6 +27,37 @@
 全部出现 `CONNECT tunnel failed, response 502`（本机代理隧道波动）。这**不是链接失效**，
 浏览器里也可能时好时坏——换个网络或稍后重试即可。国内直连的 Gitee / GitCode 当时可访问。
 
+### 代理 502 的诊断与绕行
+
+本机实测：`api.github.com` 稳定 200（可查账号、可建仓 API），但 `github.com` 时通时断，
+`git push` 报 `fatal: unable to access ...: CONNECT tunnel failed, response 502`。
+这是 **HTTP 代理链路故障**，不是 GitHub 服务问题，也不是本地 Git 配置错误。按顺序排查：
+
+```bash
+# ① 主站是否可达（000 / 502 即代理问题）
+curl -s -o /dev/null -w "%{http_code}\n" https://github.com
+
+# ② Git 是否用了与 curl 不同的代理
+git config --show-origin --get-all http.proxy
+env | grep -i proxy
+
+# ③ 试无代理直连（仅诊断，不改配置）
+env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+  curl -s -o /dev/null -w "%{http_code}\n" --max-time 12 https://github.com
+```
+
+国内直连 `github.com:443` 通常也失败（实测 `Failed to connect to github.com:443`），
+说明**必须换网络或换代理节点**（手机热点常有效）。另一个有效绕行是**改走 SSH**：
+22 端口不走 HTTP 代理，实测可连通，把公钥加到 https://github.com/settings/keys 后：
+
+```bash
+git remote set-url origin git@github.com:<用户名>/ai-router.git
+ssh -T git@github.com        # 应返回 Hi <用户名>! You've successfully authenticated...
+git push -u origin main
+```
+
+若 22 端口也被拦，再用方式 B 里的 SSH over 443 配置。
+
 ### 如果其实有账号，只是不记得用户名
 
 - 登录后打开 https://github.com/settings/profile ，或用右上角头像下拉菜单里 `@` 开头的那行。
@@ -46,6 +77,10 @@
 > 同样执行 `git push -u origin main`；GCM 的浏览器登录流程不适用，需按 Gitee 提示用账号密码 / 私人令牌。
 
 ## 0. 先确认本机状态
+
+> 下面是**首次配置前**的实测值；本项目后来已配好仓库级身份与 `origin` remote，
+> 并以 `1xjinfeng2 <xujinfeng@agent.qq.com>` 重写了全部本地提交的作者。
+> 全新机器照此逐项自查即可。
 
 ```bash
 git --version                                  # 本仓库实测 2.55.0.windows.3
@@ -194,6 +229,7 @@ git grep -nE 'sk-[A-Za-z0-9]{24,}|ark-[0-9a-fA-F-]{24,}' HEAD   # 提交历史�
 | `! [rejected] main -> main (fetch first)` | 建仓时勾了 README，远端有本地没有的提交 | `git pull --rebase origin main` 后再 push；或删掉重建空仓库 |
 | `fatal: not a git repository` | 没在仓库目录 | `cd ~/.workbuddy/skills/ai-router` |
 | GCM 反复要求登录 | 缓存了失效凭证 | 凭据管理器删除 `git:https://github.com` |
+| `CONNECT tunnel failed, response 502` | HTTP 代理链路对 `github.com` 不稳定 | 见「代理 502 的诊断与绕行」：换网络 / 改走 SSH |
 
 ## 6. 推送成功后
 
