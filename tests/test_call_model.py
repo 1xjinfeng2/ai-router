@@ -107,6 +107,43 @@ class RetryFallbackTests(unittest.TestCase):
         self.assertIsNone(res["text"])
         self.assertIn("402", str(res["error"]))
 
+    def test_skip_list_removes_dead_fallback_hop(self):
+        seen = []
+
+        def dead(provider, prompt, system=None, temperature=None,
+                 max_tokens=2048, top_p=None, timeout=60, model=None):
+            seen.append(provider)
+            raise _http_error(402)
+
+        cm.call_once = dead
+        os.environ["AI_ROUTER_SKIP_PROVIDERS"] = "deepseek"
+        try:
+            cm.call_text("th-flash", "x")  # chain: th-flash -> doubao -> deepseek
+        finally:
+            os.environ.pop("AI_ROUTER_SKIP_PROVIDERS", None)
+        self.assertNotIn("deepseek", seen)
+        self.assertEqual(seen, ["th-flash", "doubao"])
+
+    def test_skip_list_does_not_block_an_explicit_request(self):
+        seen = []
+
+        def ok(provider, prompt, system=None, temperature=None,
+               max_tokens=2048, top_p=None, timeout=60, model=None):
+            seen.append(provider)
+            return _resp("ok")
+
+        cm.call_once = ok
+        os.environ["DEEPSEEK_API_KEY"] = "test-key"
+        os.environ["AI_ROUTER_SKIP_PROVIDERS"] = "deepseek"
+        try:
+            res = cm.call_text("deepseek", "x")
+        finally:
+            os.environ.pop("AI_ROUTER_SKIP_PROVIDERS", None)
+            os.environ.pop("DEEPSEEK_API_KEY", None)
+        self.assertEqual(res["text"], "ok")
+        self.assertEqual(seen, ["deepseek"])
+        self.assertIsNone(res["fallback_from"])
+
     def test_empty_body_triggers_token_expansion(self):
         budgets = []
 

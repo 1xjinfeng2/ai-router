@@ -344,7 +344,7 @@ they are stored only in the local vault and excluded from git and from the zip.
 ## Verify Before Shipping
 
 ```bash
-python -m unittest discover -s tests -v   # 64 tests, stdlib only
+python -m unittest discover -s tests -v   # 67 tests, stdlib only
 python -m compileall -q scripts tests
 python scripts/package.py --check-only    # structure + secret scan
 ```

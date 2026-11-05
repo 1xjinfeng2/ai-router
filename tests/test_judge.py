@@ -47,6 +47,14 @@ class JudgeTests(unittest.TestCase):
             self.assertIn("ark-deepseek", configured)
             self.assertNotIn("th-flash", configured)
 
+    def test_skip_list_is_excluded_from_configured(self):
+        with mock.patch.dict(os.environ,
+                             {"ARK_API_KEY": "x", "AI_ROUTER_SKIP_PROVIDERS": "doubao"},
+                             clear=False):
+            configured = judge.configured_providers()
+            self.assertNotIn("doubao", configured)
+            self.assertIn("ark-deepseek", configured)
+
     def test_llm_classify_falls_back_to_rules_on_error(self):
         with mock.patch("subprocess.run", side_effect=TimeoutError("boom")):
             task, reason = judge.llm_classify("帮我写 python 函数")

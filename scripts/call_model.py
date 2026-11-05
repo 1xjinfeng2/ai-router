@@ -328,6 +328,17 @@ def call_with_retry(provider, prompt, system=None, temperature=None,
     raise last  # pragma: no cover
 
 
+def skipped_providers():
+    """Providers the user marked as unusable (e.g. a zero-balance key).
+
+    Set AI_ROUTER_SKIP_PROVIDERS="deepseek,kimi" in .env. Automatic routing and
+    failover skip them entirely; an explicit --provider still tries (and reports)
+    so a deliberate request never silently changes model.
+    """
+    raw = os.environ.get("AI_ROUTER_SKIP_PROVIDERS", "")
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
 def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
               top_p=None, timeout=60, model=None, allow_fallback=True,
               log=None):
@@ -350,6 +361,7 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
     attempted = []
     budget = effective_max_tokens(provider, max_tokens)
     last_err, last_status = "no provider answered", None
+    skip = skipped_providers()
 
     for idx, prov in enumerate(chain):
         if prov not in PROVIDERS:
@@ -357,6 +369,9 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
         env = PROVIDERS[prov][1]
         if not os.environ.get(env):
             log(f"skip fallback '{prov}': missing {env}")
+            continue
+        if idx > 0 and prov in skip:
+            log(f"skip fallback '{prov}': marked unavailable in AI_ROUTER_SKIP_PROVIDERS")
             continue
         # Fallbacks get the same reasoning-aware budget as their own floor.
         prov_budget = effective_max_tokens(prov, budget)

@@ -194,7 +194,12 @@ def configured_providers():
         "th-flash": "HUNYUAN_API_KEY", "th-kimi": "HUNYUAN_API_KEY",
         "th-glm": "HUNYUAN_API_KEY", "th-minimax": "HUNYUAN_API_KEY",
     }
-    return {p for p, e in env_map.items() if os.environ.get(e)}
+    configured = {p for p, e in env_map.items() if os.environ.get(e)}
+    # Providers with no usable balance are excluded from automatic routing so a
+    # dead line never becomes the "best" pick or a wasted failover hop.
+    skip = {p.strip() for p in os.environ.get("AI_ROUTER_SKIP_PROVIDERS", "").split(",")
+            if p.strip()}
+    return configured - skip
 
 
 def health_adjusted(ranked, min_calls=3, min_rate=0.6):

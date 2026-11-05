@@ -16,7 +16,7 @@
 - 📊 **费用与用量统计**：本地记录每次调用的 token 数与估算费用（CNY），相同请求可走缓存省额度
 - 🛡️ **失败重试 + 跨模型降级**：限流/5xx 指数退避重试，401/402 立即切备用模型，推理模型空正文自动扩容重试
 - 🌊 **流式输出**：`--stream` 边生成边打印，隐私占位符跨 chunk 也能正确还原
-- 🧪 **64 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、打包密钥扫描全覆盖
+- 🧪 **67 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、打包密钥扫描全覆盖
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -73,6 +73,15 @@
 `.env` 由 `scripts/env_loader.py` 自动加载（纯标准库，无需安装 `python-dotenv`）；已存在的环境变量优先级更高。
 
 未配置密钥的供应商会在路由时被自动跳过，向下取下一个可用模型。
+
+**已知不可用的线路可以显式拉黑**（余额为 0、Key 已停用等），避免每次降级都白等一次 401/402：
+
+```bash
+# .env
+AI_ROUTER_SKIP_PROVIDERS=deepseek
+```
+
+被拉黑的供应商不再出现在自动路由候选里，也不会作为降级跳板；但显式 `--provider deepseek` 仍会尝试并如实报错，不会偷偷换模型。同一个模型通常还能从聚合平台走：`deepseek` → `th-deepseek`（TokenHub）或 `ark-deepseek`（方舟）。
 
 ## 密钥在哪找
 
@@ -444,7 +453,7 @@ python scripts/privacy.py --restore --session <sid> --text "<PII_PHONE_1>"   # �
 ## 测试与 CI
 
 ```bash
-python -m unittest discover -s tests -v     # 64 项单测，全部标准库 unittest
+python -m unittest discover -s tests -v     # 67 项单测，全部标准库 unittest
 python -m compileall -q scripts tests       # 语法检查
 python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
 ```
@@ -487,7 +496,7 @@ ai-router/
 │   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总/投票 → 还原
 │   ├── usage.py          # 本地用量计量 + 响应缓存 + 健康度报表
 │   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 各类 .db）
-├── tests/                # 64 项标准库单测（无需任何依赖）
+├── tests/                # 67 项标准库单测（无需任何依赖）
 │   ├── test_privacy.py   # 脱敏↔还原、TTL、加密、流式还原
 │   ├── test_call_model.py# 错误分类、退避重试、跨模型降级、token 扩容
 │   ├── test_usage.py     # 计量聚合、缓存键、健康度、过期清理
