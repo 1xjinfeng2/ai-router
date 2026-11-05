@@ -140,8 +140,8 @@ def main():
                     help="comma-separated providers, 'auto' (judge top-N), or use --all")
     ap.add_argument("--all", action="store_true", help="fan out to every configured provider")
     ap.add_argument("--top", type=int, default=2, help="auto mode: how many top providers to use")
-    ap.add_argument("--organizer", default="doubao",
-                    help="provider used to merge/polish the answers (default doubao)")
+    ap.add_argument("--organizer", default="th-deepseek",
+                    help="provider used to merge/polish the answers (default th-deepseek, a stronger reasoning model)")
     ap.add_argument("--no-organize", action="store_true", help="skip the polish pass, just concat")
     ap.add_argument("--no-restore", action="store_true", help="keep <PII_*> placeholders in output")
     ap.add_argument("--strict", action="store_true", help="heuristic name/address redaction")
