@@ -7,6 +7,7 @@
 ## 特性
 
 - 🧭 **裁判模型动态路由**：按任务类型（编程 / 中文 / 推理 / 长文 / 视觉 / 结构化 / 性价比 / 联网）自动选最优模型
+- ⚡ **一句话自动模式**：`ask.py --prompt "问题"` 一条命令完成「判定领域 → 选最强模型 → 调用 → 返回」，不需要指定供应商
 - 🔌 **统一接入**：豆包、DeepSeek、Kimi、通义、智谱、混元、Gemini、OpenAI、Claude、文心一言，一套脚本全部打通
 - 🔑 **两个聚合平台驱动**：火山方舟 + 腾讯云 TokenHub，两个 Key 覆盖 180+ 模型，无需逐家申请官方 Key
 - 🪶 **零依赖**：调用脚本仅用 Python 标准库，无需 `pip install`
@@ -15,7 +16,7 @@
 - 📊 **费用与用量统计**：本地记录每次调用的 token 数与估算费用（CNY），相同请求可走缓存省额度
 - 🛡️ **失败重试 + 跨模型降级**：限流/5xx 指数退避重试，401/402 立即切备用模型，推理模型空正文自动扩容重试
 - 🌊 **流式输出**：`--stream` 边生成边打印，隐私占位符跨 chunk 也能正确还原
-- 🧪 **52 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、打包密钥扫描全覆盖
+- 🧪 **64 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、打包密钥扫描全覆盖
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -168,7 +169,28 @@ python scripts/check_provider.py --provider doubao          # 诊断当前配置
 python scripts/check_provider.py --provider hunyuan --scan  # 列出 TokenHub 可用模型
 ```
 
-**1. 自动路由（裁判模式）**
+**1. 自动路由（推荐：一条命令出答案）**
+
+只给问题，不给供应商，它自己判断领域、挑该领域最强的模型并回答：
+
+```bash
+python scripts/ask.py --prompt "为什么这段 SQL 会锁表"
+```
+
+```
+[ask] task=code (matched keywords for 'code' (sql)) -> th-code / kimi-k2.7-code
+[ask] answered by th-code / kimi-k2.7-code
+表锁通常由三种情况引起：…
+```
+
+只看它会选谁、不真正调用（省钱）：
+
+```bash
+python scripts/ask.py --prompt "把这份表格提取成 json" --dry-run
+# {"task_type": "structured", "provider": "th-flash", "model": "deepseek-v4.1-flash", ...}
+```
+
+**2. 自动路由（分步：先看裁判结论，再手动调）**
 
 ```bash
 python scripts/judge.py --prompt "帮我用Python写个爬虫"
@@ -179,13 +201,13 @@ python scripts/judge.py --prompt "帮我用Python写个爬虫"
 python scripts/call_model.py --provider th-code --prompt "帮我用Python写个爬虫"
 ```
 
-**2. 直接指定模型**
+**3. 直接指定模型**
 
 ```bash
 python scripts/call_model.py --provider doubao --prompt "写一条小红书文案"
 ```
 
-**3. 用 LLM 当裁判（语义分类）**
+**4. 用 LLM 当裁判（语义分类）**
 
 ```bash
 python scripts/judge.py --prompt "总结这篇论文的核心贡献" --use-llm
@@ -422,7 +444,7 @@ python scripts/privacy.py --restore --session <sid> --text "<PII_PHONE_1>"   # �
 ## 测试与 CI
 
 ```bash
-python -m unittest discover -s tests -v     # 52 项单测，全部标准库 unittest
+python -m unittest discover -s tests -v     # 64 项单测，全部标准库 unittest
 python -m compileall -q scripts tests       # 语法检查
 python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
 ```
@@ -456,19 +478,21 @@ ai-router/
 ├── .env.example          # API Key 模板（含各家申请地址）
 ├── .gitignore            # 排除 .env 与缓存
 ├── scripts/
+│   ├── ask.py            # 一条命令自动模式：判定 → 选最强模型 → 调用 → 回答
 │   ├── call_model.py     # 统一调用 + 重试/降级 + 推理模型 token 档案 + 流式
-│   ├── judge.py          # 任务分类、模型推荐、按历史成功率降权
+│   ├── judge.py          # 加权任务分类、模型推荐、按历史成功率降权
 │   ├── check_provider.py # 接入自检 / 列出可用模型 ID
 │   ├── env_loader.py     # 纯标准库 .env 加载器
 │   ├── privacy.py        # 本地隐私库：脱敏 / 还原 / TTL / 可选加密 / 流式还原
 │   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总/投票 → 还原
 │   ├── usage.py          # 本地用量计量 + 响应缓存 + 健康度报表
 │   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 各类 .db）
-├── tests/                # 52 项标准库单测（无需任何依赖）
+├── tests/                # 64 项标准库单测（无需任何依赖）
 │   ├── test_privacy.py   # 脱敏↔还原、TTL、加密、流式还原
 │   ├── test_call_model.py# 错误分类、退避重试、跨模型降级、token 扩容
 │   ├── test_usage.py     # 计量聚合、缓存键、健康度、过期清理
 │   ├── test_judge.py     # 路由分类、健康度降权
+│   ├── test_ask.py       # 自动模式：路由决策、误判回归、CLI
 │   └── test_package.py   # 打包排除与密钥扫描
 ├── .github/workflows/
 │   └── ci.yml            # Python 3.9/3.12：编译 + 单测 + 打包校验 + 脱敏冒烟

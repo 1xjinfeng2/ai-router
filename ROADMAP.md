@@ -40,7 +40,7 @@
 4. ✅ 可选加密：`cryptography` + `AI_ROUTER_VAULT_PASSPHRASE` → PBKDF2(200k)+Fernet，`enc:v1:` 前缀，`--encrypt/--decrypt`；无依赖时优雅降级并明确提示
 
 ### Phase 2 · 质量保障（已完成 ✅）
-5. ✅ 单测：`tests/` 52 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
+5. ✅ 单测：`tests/` 64 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
 6. ✅ GitHub Actions CI：Python 3.9 / 3.12 双版本，编译 + 单测 + `package.py --check-only` + 脱敏冒烟
 
 ### Phase 3 · 体验增强（已完成 ✅）

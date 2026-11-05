@@ -27,23 +27,66 @@ ROUTING = {
     "search":       [],  # needs a web tool, no built-in model
 }
 
+# Weighted keywords. "strong" terms are unambiguous signals (weight 3);
+# "weak" terms are common words that only decide when nothing strong matches
+# (weight 1). This matters: a flat keyword list used to send "写一句签到提醒"
+# to the code model because of the single character "写".
 KEYWORDS = {
-    "code": ["代码", "编程", "写", "函数", "bug", "debug", "报错", "重构", "前端", "后端",
-             "python", "javascript", "react", "sql", "脚本", "接口", "算法", "code", "function", "bug"],
-    "chinese": ["文案", "中文", "翻译", "润色", "小红书", "公众号", "朋友圈", "邮件", "诗歌", "作文",
-                "writing", "chinese", "translate", "copywrite"],
-    "reasoning": ["推理", "数学", "证明", "逻辑", "复杂", "为什么", "分析", "策略", "决策",
-                  "reason", "math", "prove", "logic", "analysis"],
-    "long-context": ["总结", "长文", "论文", "文档", "PDF", "报告", "阅读", "提炼",
-                     "summarize", "long", "paper", "document", "report"],
-    "vision": ["图片", "图像", "截图", "照片", "识别", "画", "视觉",
-               "image", "photo", "picture", "vision", "screenshot"],
-    "structured": ["json", "提取", "表格", "结构化", "解析", "字段",
-                   "extract", "table", "parse", "structured"],
-    "cheap": ["闲聊", "日常", "快速", "简单", "随便", "hello", "hi", "聊天"],
-    "search": ["最新", "今天", "实时", "新闻", "搜索", "查一下", "2026", "现在",
-               "latest", "news", "search", "current"],
+    "code": {
+        "strong": ["代码", "编程", "函数", "报错", "调试", "重构", "编译", "部署", "接口",
+                   "数据库", "脚本", "爬虫", "正则", "python", "javascript", "typescript",
+                   "java", "react", "vue", "sql", "api", "docker", "git", "css", "bug",
+                   "debug", "code", "function"],
+        "weak": ["实现", "前端", "后端", "算法", "性能", "变量", "组件", "服务端"],
+    },
+    "chinese": {
+        "strong": ["文案", "润色", "翻译", "小红书", "公众号", "朋友圈", "标题", "邮件",
+                   "公文", "发言稿", "主持词", "邀请函", "通知稿", "诗歌", "作文", "话术",
+                   "通稿", "软文", "宣传语", "slogan", "copywrite", "translate"],
+        "weak": ["写", "中文", "措辞", "语气", "风格", "繁体", "简体", "英文", "改写"],
+    },
+    "reasoning": {
+        "strong": ["证明", "推理", "数学", "逻辑", "论证", "悖论", "概率", "博弈", "统计推断",
+                   "prove", "math", "reason", "logic"],
+        "weak": ["为什么", "分析", "策略", "决策", "权衡", "原因", "该不该", "方案",
+                 "analysis", "trade-off"],
+    },
+    "long-context": {
+        "strong": ["总结", "提炼", "摘要", "长文", "论文", "全文", "逐页", "pdf", "会议纪要",
+                   "summarize", "paper", "document"],
+        "weak": ["文档", "报告", "阅读", "概括", "要点", "章节", "report", "long"],
+    },
+    "vision": {
+        "strong": ["图片", "图像", "截图", "照片", "视觉", "看图", "ocr",
+                   "image", "photo", "picture", "screenshot", "vision"],
+        "weak": ["画", "配色", "设计图", "识别"],
+    },
+    "structured": {
+        "strong": ["json", "yaml", "xml", "csv", "结构化", "字段", "解析", "提取", "抽取",
+                   "schema", "extract", "parse", "structured"],
+        "weak": ["表格", "格式转换", "清洗", "table"],
+    },
+    "cheap": {
+        "strong": ["闲聊", "你好", "在吗", "hello", "谢谢", "哈哈", "早上好", "晚安"],
+        "weak": ["随便", "简单", "快速", "日常", "聊", "hi"],
+    },
+    "search": {
+        "strong": ["最新", "今天", "实时", "新闻", "天气", "股价", "汇率", "查一下", "搜一下",
+                   "最近发生", "latest", "news"],
+        "weak": ["现在", "当前", "2026", "搜索", "current", "search"],
+    },
 }
+
+# Deterministic tie-break when two task types score the same.
+TASK_PRIORITY = ["code", "structured", "vision", "search", "long-context",
+                 "reasoning", "chinese", "cheap"]
+
+STRONG_WEIGHT = 3
+WEAK_WEIGHT = 1
+
+# A prompt with no keyword at all: very short ones are small talk, anything
+# longer is almost certainly a general Chinese task, not "cheap".
+SHORT_PROMPT_CHARS = 8
 
 DEFAULT_MODEL = {
     "claude": "claude-sonnet-5-5",
@@ -83,16 +126,36 @@ def pick_judge_provider(configured):
 
 
 def rule_classify(prompt):
-    scores = {k: 0 for k in KEYWORDS}
+    """Score every task type by weighted keyword hits and take the best one.
+
+    Strong signals count 3, weak ones 1. Ties are broken by TASK_PRIORITY so the
+    result is deterministic. A prompt with no hit at all is treated as small talk
+    when it is very short, otherwise as a general Chinese task.
+    """
     low = prompt.lower()
-    for t, kws in KEYWORDS.items():
-        for kw in kws:
+    scores, hits = {}, {}
+    for task, groups in KEYWORDS.items():
+        score, matched = 0, []
+        for kw in groups.get("strong", []):
             if kw.lower() in low:
-                scores[t] += 1
-    best = max(scores, key=lambda k: scores[k])
-    if scores[best] == 0:
-        return "cheap", "no keyword matched, default to cheap"
-    return best, f"matched keywords for '{best}'"
+                score += STRONG_WEIGHT
+                matched.append(kw)
+        for kw in groups.get("weak", []):
+            if kw.lower() in low:
+                score += WEAK_WEIGHT
+                matched.append(kw)
+        scores[task], hits[task] = score, matched
+
+    best_score = max(scores.values())
+    if best_score == 0:
+        if len(prompt.strip()) <= SHORT_PROMPT_CHARS:
+            return "cheap", "no keyword matched, short prompt -> cheap"
+        return "chinese", "no keyword matched, default to chinese"
+
+    tied = [t for t, s in scores.items() if s == best_score]
+    tied.sort(key=lambda t: TASK_PRIORITY.index(t) if t in TASK_PRIORITY else 99)
+    best = tied[0]
+    return best, f"matched keywords for '{best}' ({', '.join(hits[best][:4])})"
 
 
 def llm_classify(prompt, judge_provider="deepseek", judge_model=None):

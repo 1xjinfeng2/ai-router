@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.1.0
+version: 1.2.0
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -43,27 +43,66 @@ and `HUNYUAN_API_KEY` (Tencent TokenHub, 126 models / 120 online). Together they
 cover Doubao, Hunyuan, DeepSeek, Kimi, GLM, MiniMax and Step without applying for
 each vendor's own key.
 
+## Auto Mode — 用户只出问题，路由全自动（默认）
+
+The default contract: **the user just asks a question; you classify it, pick the
+strongest configured model for that domain, call it, and hand back the answer
+with attribution.** No provider flag, no confirmation, no extra round trip.
+
+One command does the whole chain:
+
+```bash
+python scripts/ask.py --prompt "为什么这段 SQL 会锁表"
+```
+
+`ask.py` = judge (weighted keywords, free) → filter by configured keys →
+health re-rank (`usage.db`) → call with retry + cross-model fallback → print
+the answer. stdout carries only the answer; routing and cost notes go to stderr.
+
+| Flag | Use |
+|---|---|
+| `--dry-run` | show `{task_type, provider, model, ranked_providers}` without calling |
+| `--use-llm` | semantic classification instead of keywords (costs one cheap call) |
+| `--json` | structured record: text + provider + model + usage + latency |
+| `--max-tokens` / `--timeout` / `--system` | same meaning as in `call_model.py` |
+| `--no-fallback` | do not degrade to another provider when the top one fails |
+
+**Operating rules for the agent**
+
+1. Any substantive question → run `ask.py` (or judge + `call_model.py`), then
+   relay the answer. Do not answer it yourself first and route afterwards.
+2. Attribute in one line: `> 🤖 由 <provider> · <model> 回答（任务类型：<task>）`.
+   If a fallback fired, say so and name the fallback model.
+3. Exceptions — answer directly, skip routing: pure file/terminal operations,
+   short clarifications, and any turn where the user says "你自己答" /
+   "别调外部模型". `search`-type questions need WorkBuddy's web tools first;
+   pass the findings in `--prompt` instead of asking the model to browse.
+4. If every provider fails, report the exact errors from stderr — never invent
+   an answer and attribute it to a model.
+
 ## When to Use
 
 | Request | Action |
 |---|---|
-| "用最好的AI帮我…" / "路由这个问题" / "把这个问题交给最厉害的模型" | Judge → route → call |
+| Any substantive question (default) | `ask.py` — auto judge → best model → answer |
+| "用最好的AI帮我…" / "路由这个问题" / "把这个问题交给最厉害的模型" | Same as above |
 | "问豆包/GPT/Claude/Kimi/通义/DeepSeek…" | Use named provider directly |
 | "哪个AI最擅长写文案/写代码？" | Explain routing, then route |
 | "让多个AI都回答并对比" / "模型投票" / "集成回答" | Multi-model compare & vote |
-| Any generic question where answer quality matters | Default to judge-then-route |
 
 ## How It Works — Judge → Route → Call → Return
 
 1. **Judge** — classify the prompt into a task type: `code`, `chinese`,
    `reasoning`, `long-context`, `vision`, `structured`, `cheap`, `search`.
-   Prefer `scripts/judge.py --prompt "..."` for an automatic recommendation, or
-   classify inline using the table below.
+   Weighted keywords: strong signals count 3, weak ones 1, ties broken by
+   `TASK_PRIORITY`. Use `scripts/judge.py --prompt "..."` for the raw decision,
+   or just let `ask.py` do steps 1–3 in one shot.
 2. **Route** — look up the task type in the Expert Routing Table to get the
    ranked provider list; pick the top provider whose API key is actually set in
    the environment. Skip providers with missing keys and fall through.
-3. **Call** — run
-   `scripts/call_model.py --provider <p> --model <m> --prompt "..."`.
+3. **Call** — `scripts/ask.py --prompt "..."` (recommended, one command) or
+   `scripts/call_model.py --provider <p> --model <m> --prompt "..."` when the
+   provider is already known.
 4. **Return** — paste the model's answer, prefixed with a one-line attribution,
    e.g. `> 🤖 本次由 TokenHub (kimi-k2.7-code) 完成`.
 
@@ -288,14 +327,15 @@ they are stored only in the local vault and excluded from git and from the zip.
 
 ## Resources
 
+- `scripts/ask.py` — **one-command auto mode**: judge → pick best configured model → answer, with retry/fallback and metering
 - `scripts/call_model.py` — unified OpenAI-compatible caller: retry/backoff, cross-model fallback, reasoning token floors, SSE streaming
-- `scripts/judge.py` — task classifier, model recommender, health-based demotion
+- `scripts/judge.py` — weighted task classifier, model recommender, health-based demotion
 - `scripts/check_provider.py` — provider diagnostics and available-model discovery (`--scan`)
 - `scripts/env_loader.py` — stdlib-only `.env` loader (zero dependencies)
 - `scripts/privacy.py` — local PII vault: redact / restore / TTL / optional encryption / stream restore
 - `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize or vote → restore
 - `scripts/usage.py` — local usage metering + response cache + provider health report (`--report`, `--health`, `--expire`)
-- `tests/` — 52 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, packaging)
+- `tests/` — 64 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, packaging)
 - `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.9/3.12
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
 - `references/onboarding.md` — which providers to add next, priority order, free-tier comparison
@@ -304,7 +344,7 @@ they are stored only in the local vault and excluded from git and from the zip.
 ## Verify Before Shipping
 
 ```bash
-python -m unittest discover -s tests -v   # 52 tests, stdlib only
+python -m unittest discover -s tests -v   # 64 tests, stdlib only
 python -m compileall -q scripts tests
 python scripts/package.py --check-only    # structure + secret scan
 ```

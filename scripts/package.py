@@ -36,7 +36,8 @@ KEY_PATTERNS = [
     re.compile(rb"sk-tp-[A-Za-z0-9_-]{16,}"),
 ]
 
-REQUIRED = ["SKILL.md", "README.md", "LICENSE", "scripts/call_model.py"]
+REQUIRED = ["SKILL.md", "README.md", "LICENSE", "scripts/call_model.py",
+            "scripts/ask.py", "scripts/relay.py", "scripts/judge.py"]
 
 
 def should_skip(path: Path) -> bool:
