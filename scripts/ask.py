@@ -162,6 +162,10 @@ def answer(prompt, system=None, task=None, provider=None, model=None,
                            ("use_llm", use_llm)):
             if value not in (None, [], False):
                 payload[key] = value
+        if payload.get("images"):
+            # Encode here: the server cannot see this machine's filesystem.
+            payload["images"] = [call_model.image_to_data_url(p)
+                                 for p in payload["images"]]
         return remote_answer(remote, payload,
                              token or os.environ.get("AI_ROUTER_SERVER_TOKEN"),
                              timeout=max(int(timeout or 90), 30) + 30)

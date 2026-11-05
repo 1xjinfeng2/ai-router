@@ -99,6 +99,37 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(body["text"], "好的")
         self.assertEqual(m.call_args.kwargs["max_tokens"], 64)
 
+    def test_ask_accepts_inline_base64_image(self):
+        """A remote client cannot send a local path, so it sends a data: URL."""
+        fake = {"text": "图里是海报", "provider": "th-vision", "model": "hy-vision-2.0-instruct",
+                "requested_provider": "th-vision", "task_type": "vision",
+                "reason": "forced", "usage": {}, "latency_ms": 5, "fallback_from": None}
+        data_url = "data:image/png;base64,iVBORw0KGgo="
+        with mock.patch.object(ask, "answer", return_value=fake) as m:
+            code, body = call(self.base, "/ask",
+                              {"prompt": "看图", "images": [data_url]}, token="t0ken")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["text"], "图里是海报")
+        # Forwarded untouched: re-encoding a data URL would corrupt it.
+        self.assertEqual(m.call_args.kwargs["images"], [data_url])
+
+    def test_image_path_that_does_not_exist_is_400(self):
+        code, body = call(self.base, "/ask",
+                          {"prompt": "看图", "images": ["/no/such/photo.jpg"]},
+                          token="t0ken")
+        self.assertEqual(code, 400)
+        self.assertIn("not found", body["error"])
+        self.assertIn("data: URL", body["hint"])
+
+    def test_oversized_inline_image_is_413(self):
+        with mock.patch.object(srv, "MAX_IMAGE_B64", 32):
+            code, body = call(self.base, "/ask",
+                              {"prompt": "看图",
+                               "images": ["data:image/png;base64," + "A" * 200]},
+                              token="t0ken")
+        self.assertEqual(code, 413)
+        self.assertIn("too large", body["error"])
+
     def test_missing_prompt_is_400(self):
         code, body = call(self.base, "/ask", {"system": "x"}, token="t0ken")
         self.assertEqual(code, 400)

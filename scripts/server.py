@@ -48,7 +48,10 @@ import ask  # noqa: E402
 import call_model  # noqa: E402
 import judge  # noqa: E402
 
-MAX_BODY = 1 << 20          # 1 MiB
+MAX_BODY = 1 << 20          # 1 MiB, text requests
+MAX_BODY_IMAGES = 8 << 20   # 8 MiB, requests that carry inline base64 images
+MAX_IMAGES = 8              # per request
+MAX_IMAGE_B64 = 6 << 20     # characters of base64 per image (~4.5 MB raw)
 MAX_PROMPT = 20000          # characters
 START_TS = time.time()
 
@@ -135,14 +138,15 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _read_json(self):
+    def _read_json(self, limit=None):
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             self._send(400, {"error": "bad Content-Length"})
             return None
-        if length > MAX_BODY:
-            self._send(413, {"error": f"body too large (max {MAX_BODY} bytes)"})
+        limit = limit or MAX_BODY
+        if length > limit:
+            self._send(413, {"error": f"body too large (max {limit} bytes)"})
             return None
         raw = self.rfile.read(length) if length else b""
         try:
@@ -226,7 +230,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self._guard():
             return
-        data = self._read_json()
+        data = self._read_json(MAX_BODY_IMAGES)
         if data is None:
             return
 
@@ -241,12 +245,27 @@ class Handler(BaseHTTPRequestHandler):
         images = data.get("images") or data.get("image") or []
         if isinstance(images, str):
             images = [images]
-        missing = [p for p in images if not os.path.isfile(str(p))]
+        if len(images) > MAX_IMAGES:
+            self._send(413, {"error": f"too many images (max {MAX_IMAGES})"})
+            return
+        missing = []
+        for p in images:
+            s = str(p)
+            if s.startswith("data:image/"):
+                # Inline base64 from a remote client. Cap it so one request
+                # cannot exhaust memory or hammer the upstream model.
+                if len(s) > MAX_IMAGE_B64:
+                    self._send(413, {"error": "image too large after base64 "
+                                              f"(max {MAX_IMAGE_B64} chars)"})
+                    return
+                continue
+            if not os.path.isfile(s):
+                missing.append(s)
         if missing:
             # Remote callers cannot send a path that only exists on their laptop.
             self._send(400, {"error": f"image not found on server: {missing[0]}",
-                             "hint": "copy the file to the server, or pass base64 "
-                                     "via a client that supports it"})
+                             "hint": "send a data: URL (base64) instead of a path, "
+                                     "or copy the file to the server"})
             return
 
         try:

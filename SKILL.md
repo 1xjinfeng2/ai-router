@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.6.0
+version: 1.6.1
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -413,8 +413,12 @@ curl -H "Authorization: Bearer $TOKEN" -d '{"prompt":"写条通知"}' localhost:
 
 - Routes: `GET /health` (open), `GET /providers`, `GET /usage?days=7`,
   `POST /route` (decide only, free), `POST /ask` (route + call).
-- Refuses to bind a non-loopback address without a token; 1 MiB body cap,
-  20k-char prompt cap, 30 req/min per IP; prompts are never logged.
+- Refuses to bind a non-loopback address without a token; 1 MiB body cap
+  (8 MiB when images are inline), 20k-char prompt cap, 8 images/request,
+  30 req/min per IP; prompts are never logged.
+- Images travel as base64 `data:` URLs, so a remote client can send a picture
+  without copying it to the server first; a server-side path still works when
+  the file is local.
 - Client mode: set `AI_ROUTER_SERVER` + `AI_ROUTER_SERVER_TOKEN` and `ask.py`
   forwards to that server instead of using local keys.
 - systemd / nginx / docker recipes and the security checklist:
@@ -445,7 +449,7 @@ that reboots mid-task should never ruin a real deliverable. It falls back to
 - `scripts/usage.py` — local usage metering + response cache + provider health report (`--report`, `--health`, `--expire`)
 - `scripts/update.py` — self-update from the git remote: version compare, dirty-tree guard, pull + test gate, auto rollback (`--check` / `--apply`)
 - `scripts/server.py` — HTTP service: `/ask`, `/route`, `/health`, `/providers`, `/usage`, bearer auth, rate limit
-- `tests/` — 114 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, HTTP server, custom endpoint, packaging)
+- `tests/` — 123 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, HTTP server, custom endpoint, packaging)
 - `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.10/3.13 (runner pinned to ubuntu-24.04)
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
 - `references/free-tier.md` — 免费额度领取清单：额度、限速、环境变量、不接入的理由（GitHub Models 已下线等）
@@ -456,7 +460,7 @@ that reboots mid-task should never ruin a real deliverable. It falls back to
 ## Verify Before Shipping
 
 ```bash
-python -m unittest discover -s tests -v   # 114 tests, stdlib only
+python -m unittest discover -s tests -v   # 123 tests, stdlib only
 python -m compileall -q scripts tests
 python scripts/package.py --check-only    # structure + secret scan
 ```

@@ -156,6 +156,30 @@ def encode_image(path):
     return mime, base64.b64encode(raw).decode("ascii")
 
 
+DATA_URL_PREFIX = "data:image/"
+
+
+def image_to_data_url(value):
+    """Return a `data:` URL for a local path or pass an existing one through.
+
+    Passing a ready data URL matters for the HTTP service: a remote caller's
+    file path means nothing on the server, so the client encodes the image
+    first and the server forwards the base64 untouched.
+    """
+    s = str(value)
+    if s.startswith(DATA_URL_PREFIX):
+        return s
+    mime, b64 = encode_image(s)
+    return f"data:{mime};base64,{b64}"
+
+
+def split_data_url(url):
+    """('image/png', '<base64>') from a data URL."""
+    head, _, b64 = url.partition(",")
+    mime = head[5:].split(";")[0] or "image/png"
+    return mime, b64
+
+
 def _build_content(prompt, images, mode):
     """Plain string for text-only calls; multimodal parts when images are given."""
     if not images:
@@ -163,15 +187,14 @@ def _build_content(prompt, images, mode):
     if mode == "anthropic":
         parts = [{"type": "text", "text": prompt}]
         for p in images:
-            mime, b64 = encode_image(p)
+            mime, b64 = split_data_url(image_to_data_url(p))
             parts.append({"type": "image",
                           "source": {"type": "base64", "media_type": mime, "data": b64}})
         return parts
     parts = [{"type": "text", "text": prompt}]
     for p in images:
-        mime, b64 = encode_image(p)
         parts.append({"type": "image_url",
-                      "image_url": {"url": f"data:{mime};base64,{b64}"}})
+                      "image_url": {"url": image_to_data_url(p)}})
     return parts
 
 

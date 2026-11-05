@@ -212,5 +212,30 @@ class ImageInputTests(unittest.TestCase):
         self.assertEqual(parts[1]["source"]["media_type"], "image/png")
 
 
+    def test_data_url_passes_through_untouched(self):
+        """Re-encoding a data URL would corrupt it: bytes are already base64."""
+        url = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+        self.assertEqual(cm.image_to_data_url(url), url)
+
+    def test_local_path_becomes_a_data_url(self):
+        url = cm.image_to_data_url(self._png())
+        self.assertTrue(url.startswith("data:image/png;base64,"))
+        mime, b64 = cm.split_data_url(url)
+        self.assertEqual(mime, "image/png")
+        self.assertTrue(b64)
+
+    def test_build_content_accepts_mixed_paths_and_data_urls(self):
+        url = "data:image/png;base64,iVBORw0KGgo="
+        parts = cm._build_content("看图", [self._png(), url], "openai")
+        self.assertEqual(parts[2]["image_url"]["url"], url)
+        self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+
+    def test_anthropic_splits_a_data_url_back_into_media_type(self):
+        url = "data:image/webp;base64,UklGRg=="
+        parts = cm._build_content("看图", [url], "anthropic")
+        self.assertEqual(parts[1]["source"]["media_type"], "image/webp")
+        self.assertEqual(parts[1]["source"]["data"], "UklGRg==")
+
+
 if __name__ == "__main__":
     unittest.main()

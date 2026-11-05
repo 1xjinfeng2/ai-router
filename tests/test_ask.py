@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -126,6 +127,37 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 ask.main()
         self.assertEqual(ctx.exception.code, 2)
+
+
+class RemoteModeTests(unittest.TestCase):
+    """In client mode the server holds the keys, so files must travel inline."""
+
+    def test_images_are_base64_encoded_before_sending(self):
+        sent = {}
+
+        def fake_post(url, payload, token=None, timeout=120):
+            sent.update(url=url, payload=payload, token=token)
+            return {"text": "ok", "provider": "th-vision", "model": "m"}
+
+        with mock.patch.object(ask, "_post_json", fake_post):
+            with tempfile.TemporaryDirectory() as d:
+                pic = Path(d) / "pic.png"
+                pic.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
+                ask.answer("看图", images=[str(pic)], remote="http://x:1")
+
+        self.assertTrue(sent["url"].endswith("/ask"))
+        self.assertTrue(sent["payload"]["images"][0].startswith("data:image/png;base64,"))
+
+    def test_text_only_request_carries_no_images_field(self):
+        sent = {}
+
+        def fake_post(url, payload, token=None, timeout=120):
+            sent.update(payload=payload)
+            return {"text": "ok"}
+
+        with mock.patch.object(ask, "_post_json", fake_post):
+            ask.answer("你好", remote="http://x:1")
+        self.assertNotIn("images", sent["payload"])
 
 
 if __name__ == "__main__":
