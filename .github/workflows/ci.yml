@@ -7,19 +7,26 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pinned on purpose, not ubuntu-latest: ubuntu-latest now resolves to
+    # Ubuntu 26.04, and actions/python-versions ships no Python 3.9 build for
+    # 26.04 (only 20.04 / 22.04 / 24.04), so setup-python fails before a single
+    # line of our code runs. 24.04 still has both 3.9 and 3.12 builds.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Show interpreter (makes a missing-version failure obvious)
+        run: python -VV
 
       - name: Install optional crypto backend (enables encryption tests)
         run: python -m pip install --upgrade pip cryptography
