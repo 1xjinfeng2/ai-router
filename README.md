@@ -314,7 +314,8 @@ git push -u origin main
 ```
 
 GitHub **已禁用账号密码认证**，可选 HTTPS + GCM（推荐，本机已自带）、SSH 密钥、`gh` CLI 三种方式；
-身份配置、SSH 授权、网络受限时的 443 端口方案、以及 `403` / `Permission denied (publickey)` /
+**还没有 GitHub 账号**的注册步骤、用户名规则、忘记用户名怎么找、以及 Gitee / 直接分享 zip 等替代方案，
+连同身份配置、SSH 授权、网络受限时的 443 端口方案、以及 `403` / `Permission denied (publickey)` /
 `fetch first` 等报错的处理，见 [`references/github-setup.md`](references/github-setup.md)。
 
 > ⚠️ **安全**：`.env` 已被 `.gitignore` 排除，**切勿** `git add -f .env`；

@@ -2,6 +2,49 @@
 
 本指南面向 **Windows + Git for Windows**，针对本仓库（已初始化 `main` 分支、已有 2 个提交、尚未设置 remote）的实际状态。
 
+## -1. 还没有 GitHub 账号？
+
+如果连账号都没有，先注册（免费，约 5 分钟），再回到第 0 节。
+
+1. 打开官方注册页 **https://github.com/signup**（`https://github.com/join` 是同一入口），
+   或点首页右上角 **Sign up**。官方也支持 **Continue with Google / Apple** 快捷注册。
+2. 依次填写：
+   - **邮箱**：一个没注册过 GitHub 的邮箱；**未验证邮箱无法创建仓库**。
+     QQ / 163 等国内邮箱偶尔收不到验证邮件，先看垃圾箱，必要时换 Outlook / Gmail。
+   - **密码**：至少 8 位且含小写字母和数字，或至少 15 位纯字符；不要用常见弱密码。
+   - **用户名**：只能用英文字母、数字、连字符 `-`，**不能以连字符开头或结尾**，不能有中文或空格，且全站唯一。
+3. 完成**人机验证**（图形题，失败可重试）→ 点 Create account →
+   去邮箱找 GitHub 的 **8 位验证码**，在 24 小时内填入。
+4. 选 **Free** 计划（ unlimited 公开/私有仓库、GitHub Actions、Pages 都包含），
+   引导问卷可直接 Skip。建议随后在 https://github.com/settings/security 开启两步验证（2FA）。
+
+> ⚠️ **用户名会永久出现在你的主页地址 `github.com/<用户名>`、每个仓库链接和提交记录里**。
+> 虽然后续可以在设置里改名（旧链接会重定向），但本地 remote、提交归属等都要跟着调整。
+> 建议一次取一个长期可用的英文名。想确认是否被占用，可访问
+> `https://api.github.com/users/<想用的名字>`：返回 404 表示尚未被注册。
+
+**网络提示**：2026-11-05 实测 `github.com` 主站一度返回 200，随后注册页、登录页、主站
+全部出现 `CONNECT tunnel failed, response 502`（本机代理隧道波动）。这**不是链接失效**，
+浏览器里也可能时好时坏——换个网络或稍后重试即可。国内直连的 Gitee / GitCode 当时可访问。
+
+### 如果其实有账号，只是不记得用户名
+
+- 登录后打开 https://github.com/settings/profile ，或用右上角头像下拉菜单里 `@` 开头的那行。
+- 个人主页 URL 里 `github.com/` 后面那段就是用户名。
+- 用户名**不是邮箱**，也不是显示名（Name）；填 remote 时要用用户名。
+
+### 不想注册 GitHub 的替代方案
+
+| 方案 | 说明 |
+|---|---|
+| **Gitee** | 国内直连、中文界面、手机号/邮箱即可注册；国内平台一般要求实名认证后才能建公开仓库。开源影响力与生态小于 GitHub |
+| **GitCode**（CSDN） | 国内可直连，支持从 GitHub 导入仓库 |
+| **直接分享分发包** | 已生成的 `ai-router.zip` 可以直接发给别人，放到 `~/.workbuddy/skills/` 即可安装，**完全不需要账号** |
+| **先留在本地** | 本仓库已就绪（`main` 分支、已有本地提交、工作区干净），随时可以再接远程 |
+
+> 若改用 Gitee，`git remote add origin https://gitee.com/<用户名>/ai-router.git` 后
+> 同样执行 `git push -u origin main`；GCM 的浏览器登录流程不适用，需按 Gitee 提示用账号密码 / 私人令牌。
+
 ## 0. 先确认本机状态
 
 ```bash
