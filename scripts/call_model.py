@@ -13,6 +13,7 @@ Usage:
 No third-party dependencies: uses only the Python standard library.
 """
 import argparse
+import base64
 import json
 import os
 import socket
@@ -54,6 +55,8 @@ PROVIDERS = {
     "th-kimi":     ("https://tokenhub.tencentmaas.com/v1", "HUNYUAN_API_KEY", "kimi-k3.1-pro", "openai"),
     "th-glm":      ("https://tokenhub.tencentmaas.com/v1", "HUNYUAN_API_KEY", "glm-5.3-flash", "openai"),
     "th-minimax":  ("https://tokenhub.tencentmaas.com/v1", "HUNYUAN_API_KEY", "minimax-m3.1-flash", "openai"),
+    # Vision alias: same TokenHub key, multimodal model (verified in /v1/models).
+    "th-vision":   ("https://tokenhub.tencentmaas.com/v1", "HUNYUAN_API_KEY", "hy-vision-2.0-instruct", "openai"),
 }
 
 # Load .env from the skill root using the bundled stdlib-only loader.
@@ -65,10 +68,54 @@ except ImportError:  # running from an unusual cwd
 load_env_file()
 
 
-def call_openai(base_url, api_key, model, prompt, system, temperature, max_tokens, top_p, timeout):
+IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+              ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp"}
+
+
+def encode_image(path):
+    """Return (mime, base64) for a local image, sniffing the header if needed."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    mime = IMAGE_MIME.get(os.path.splitext(path)[1].lower())
+    if mime is None:
+        if raw[:8] == b"\x89PNG\r\n\x1a\n":
+            mime = "image/png"
+        elif raw[:3] == b"\xff\xd8\xff":
+            mime = "image/jpeg"
+        elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+            mime = "image/webp"
+        elif raw[:6] in (b"GIF87a", b"GIF89a"):
+            mime = "image/gif"
+        else:
+            mime = "image/png"
+    return mime, base64.b64encode(raw).decode("ascii")
+
+
+def _build_content(prompt, images, mode):
+    """Plain string for text-only calls; multimodal parts when images are given."""
+    if not images:
+        return prompt
+    if mode == "anthropic":
+        parts = [{"type": "text", "text": prompt}]
+        for p in images:
+            mime, b64 = encode_image(p)
+            parts.append({"type": "image",
+                          "source": {"type": "base64", "media_type": mime, "data": b64}})
+        return parts
+    parts = [{"type": "text", "text": prompt}]
+    for p in images:
+        mime, b64 = encode_image(p)
+        parts.append({"type": "image_url",
+                      "image_url": {"url": f"data:{mime};base64,{b64}"}})
+    return parts
+
+
+def call_openai(base_url, api_key, model, prompt, system, temperature, max_tokens, top_p, timeout,
+                images=None):
     url = base_url.rstrip("/") + "/chat/completions"
+    content = _build_content(prompt, images, "openai")
     messages = ([{"role": "system", "content": system}] if system else []) + \
-               [{"role": "user", "content": prompt}]
+               [{"role": "user", "content": content}]
     payload = {
         "model": model,
         "messages": messages,
@@ -89,12 +136,13 @@ def call_openai(base_url, api_key, model, prompt, system, temperature, max_token
         return json.loads(resp.read().decode("utf-8"))
 
 
-def call_anthropic(base_url, api_key, model, prompt, system, temperature, max_tokens, top_p, timeout):
+def call_anthropic(base_url, api_key, model, prompt, system, temperature, max_tokens, top_p, timeout,
+                   images=None):
     url = base_url.rstrip("/") + "/messages"
     payload = {
         "model": model,
         "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": _build_content(prompt, images, "anthropic")}],
     }
     if temperature is not None:
         payload["temperature"] = temperature
@@ -283,7 +331,7 @@ def classify_error(exc):
 
 
 def call_once(provider, prompt, system=None, temperature=None, max_tokens=2048,
-              top_p=None, timeout=60, model=None):
+              top_p=None, timeout=60, model=None, images=None):
     """One raw API call. Raises the original exception on failure."""
     if provider not in PROVIDERS:
         raise ValueError(f"unknown provider '{provider}'")
@@ -294,14 +342,14 @@ def call_once(provider, prompt, system=None, temperature=None, max_tokens=2048,
     model = model or default_model
     if mode == "anthropic":
         return call_anthropic(base_url, api_key, model, prompt, system,
-                              temperature, max_tokens, top_p, timeout)
+                              temperature, max_tokens, top_p, timeout, images)
     return call_openai(base_url, api_key, model, prompt, system,
-                       temperature, max_tokens, top_p, timeout)
+                       temperature, max_tokens, top_p, timeout, images)
 
 
 def call_with_retry(provider, prompt, system=None, temperature=None,
                     max_tokens=2048, top_p=None, timeout=60, model=None,
-                    attempts=RETRY_ATTEMPTS, log=None):
+                    attempts=RETRY_ATTEMPTS, log=None, images=None):
     """Call one provider with exponential backoff on transient errors.
 
     Returns (resp, model, attempts_used, errors) where errors is a list of
@@ -310,10 +358,11 @@ def call_with_retry(provider, prompt, system=None, temperature=None,
     """
     errs = []
     last = None
+    extra = {"images": images} if images else {}
     for i in range(attempts):
         try:
             resp = call_once(provider, prompt, system, temperature, max_tokens,
-                             top_p, timeout, model)
+                             top_p, timeout, model, **extra)
             return resp, (model or PROVIDERS[provider][2]), i + 1, errs
         except Exception as e:  # noqa: BLE001
             status, retryable, detail = classify_error(e)
@@ -341,7 +390,7 @@ def skipped_providers():
 
 def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
               top_p=None, timeout=60, model=None, allow_fallback=True,
-              log=None):
+              log=None, images=None):
     """Call a provider and return a dict describing the outcome.
 
     Keys: text, error, status, usage, provider (actually used), model,
@@ -379,7 +428,7 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
         try:
             resp, used_model, tries, errs = call_with_retry(
                 prov, prompt, system, temperature, prov_budget, top_p, timeout,
-                model=None, log=log)
+                model=None, log=log, images=images)
         except Exception as e:  # noqa: BLE001
             status, retryable, detail = classify_error(e)
             last_err, last_status = detail, status
@@ -398,7 +447,7 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
             try:
                 resp2, used_model, tries2, _ = call_with_retry(
                     prov, prompt, system, temperature, bigger, top_p, timeout,
-                    model=None, log=log)
+                    model=None, log=log, images=images)
                 text2 = (extract_text(resp2, PROVIDERS[prov][3]) or "").strip()
                 if text2:
                     text, resp, u = text2, resp2, extract_usage(resp2, PROVIDERS[prov][3])
@@ -448,6 +497,7 @@ FALLBACK_CHAINS = {
     "th-kimi":      ["ark-kimi", "th-code"],
     "th-glm":       ["ark-glm", "th-flash"],
     "th-minimax":   ["th-flash", "doubao"],
+    "th-vision":    ["gemini", "openai", "doubao"],
 }
 
 
@@ -470,6 +520,8 @@ def main():
                    help="do not switch to a backup provider when this one fails")
     p.add_argument("--stream", action="store_true",
                    help="stream the answer with SSE (prints as it arrives)")
+    p.add_argument("--image", action="append", default=None, metavar="PATH",
+                   help="attach a local image (repeatable); needs a vision model")
     args = p.parse_args()
 
     base_url, key_env, default_model, mode = PROVIDERS[args.provider]
@@ -486,6 +538,11 @@ def main():
 
     def _log(msg):
         sys.stderr.write(f"[ai-router] {msg}\n")
+
+    if args.stream and args.image:
+        sys.stderr.write("[ai-router] --stream does not support --image; "
+                         "falling back to a buffered call\n")
+        args.stream = False
 
     if args.stream:
         try:
@@ -531,7 +588,8 @@ def main():
     else:
         res = call_text(args.provider, args.prompt, args.system, args.temperature,
                         args.max_tokens, args.top_p, args.timeout, args.model,
-                        allow_fallback=not args.no_fallback, log=_log)
+                        allow_fallback=not args.no_fallback, log=_log,
+                        images=args.image)
         if res["error"]:
             status = res["status"]
             sys.stderr.write(

@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.2.0
+version: 1.3.0
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -118,7 +118,7 @@ Full provider/model details live in `references/models.md`. Default order:
 | `chinese` (中文文案/翻译/润色) | doubao → hunyuan → th-glm → qwen → glm |
 | `reasoning` (推理/数学/逻辑) | openai (gpt-5.1) → th-deepseek → ark-deepseek → deepseek → gemini |
 | `long-context` (长文档/论文/总结) | gemini → th-kimi → ark-kimi → claude → qwen |
-| `vision` (图像/截图/视觉) | openai (gpt-5.1) → gemini → doubao |
+| `vision` (图像/截图/视觉) | th-vision (hy-vision-2.0-instruct) → gemini → openai → doubao |
 | `structured` (JSON/提取/表格) | openai → qwen → th-flash → deepseek |
 | `cheap` (日常/闲聊/快速) | doubao → hunyuan → th-flash → ark-deepseek → deepseek → glm |
 | `search` (实时联网/最新) | (needs a web tool) — |
@@ -135,7 +135,7 @@ python scripts/call_model.py --provider th-code \
 ```
 
 Parameters:
-- `--provider` (required): `doubao | deepseek | kimi | qwen | glm | hunyuan | gemini | openai | claude | ernie | ark-deepseek | ark-kimi | ark-glm | th-code | th-deepseek | th-flash | th-kimi | th-glm | th-minimax`
+- `--provider` (required): `doubao | deepseek | kimi | qwen | glm | hunyuan | gemini | openai | claude | ernie | ark-deepseek | ark-kimi | ark-glm | th-code | th-deepseek | th-flash | th-kimi | th-glm | th-minimax | th-vision`
 - `--model` (optional): overrides the provider default; any Ark or TokenHub model ID works with `--provider doubao` / `--provider hunyuan`
 - `--prompt` (required): the user message
 - `--system` (optional): a system prompt
@@ -143,8 +143,29 @@ Parameters:
   (e.g. `kimi-k3-1-pro`) reject explicit sampling params unless they equal a fixed
   value. Only pass them when the user asks; otherwise the model's own defaults apply.
 - `--max-tokens` (default `2048`)
+- `--image PATH` (repeatable): attach local images (png/jpg/webp/gif/bmp) as
+  base64 data URLs. Only vision-capable models can read them — use `th-vision`,
+  `gemini`, `openai` or `doubao`. `--stream` and `--image` are mutually exclusive.
 - `--json`: print the full raw API response (debugging)
 - `--timeout` (default `60`s)
+
+### Vision — attach images
+
+```bash
+# auto mode: --image forces the vision route, no --provider needed
+python scripts/ask.py --prompt "这张海报讲什么？列出时间、地点、议程" --image poster.jpg
+
+# explicit, multiple images in one request
+python scripts/call_model.py --provider th-vision \
+  --prompt "把两张图里的表格合成一张 markdown 表" --image a.png --image b.png
+```
+
+Images are inlined as base64 data URLs (`image_url` for OpenAI-compatible APIs,
+`source.base64` for Anthropic), so no file upload endpoint is involved. The
+default vision line is TokenHub `th-vision` (`hy-vision-2.0-instruct`) — it needs
+no extra key beyond `HUNYUAN_API_KEY`. If the routed provider cannot see images,
+the call fails rather than silently ignoring the attachment; check with
+`--dry-run` first.
 
 ## Configuration
 
@@ -195,7 +216,7 @@ actually available to the account.
 ### Aggregator aliases (verified 2026-11-05)
 
 `ark-deepseek`, `ark-kimi`, `ark-glm` reuse `ARK_API_KEY` (55 models on Ark).
-`th-code`, `th-deepseek`, `th-flash`, `th-kimi`, `th-glm`, `th-minimax` reuse
+`th-code`, `th-deepseek`, `th-flash`, `th-kimi`, `th-glm`, `th-minimax`, `th-vision` reuse
 `HUNYUAN_API_KEY` (126 models on TokenHub). All of them are in the automatic
 routing table (`judge.py` ROUTING) so code / reasoning / long-text tasks no
 longer fall through to the unpaid official DeepSeek account; they can also be
@@ -344,7 +365,7 @@ they are stored only in the local vault and excluded from git and from the zip.
 ## Verify Before Shipping
 
 ```bash
-python -m unittest discover -s tests -v   # 67 tests, stdlib only
+python -m unittest discover -s tests -v   # 73 tests, stdlib only
 python -m compileall -q scripts tests
 python scripts/package.py --check-only    # structure + secret scan
 ```

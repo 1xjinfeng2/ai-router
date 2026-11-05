@@ -174,5 +174,43 @@ class RetryFallbackTests(unittest.TestCase):
         self.assertIsNotNone(res["error"])
 
 
+class ImageInputTests(unittest.TestCase):
+    def _png(self):
+        import tempfile
+        f = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 24)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_encode_image_returns_mime_and_base64(self):
+        mime, b64 = cm.encode_image(self._png())
+        self.assertEqual(mime, "image/png")
+        self.assertTrue(b64.startswith("iVBOR"), b64[:12])
+
+    def test_mime_is_sniffed_when_extension_is_unknown(self):
+        import tempfile
+        f = tempfile.NamedTemporaryFile(suffix=".dat", delete=False)
+        f.write(b"\xff\xd8\xff\xe0" + b"\x00" * 16)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        mime, _ = cm.encode_image(f.name)
+        self.assertEqual(mime, "image/jpeg")
+
+    def test_text_only_content_stays_a_plain_string(self):
+        self.assertEqual(cm._build_content("hi", None, "openai"), "hi")
+
+    def test_openai_content_carries_data_url(self):
+        parts = cm._build_content("看图", [self._png()], "openai")
+        self.assertEqual(parts[0], {"type": "text", "text": "看图"})
+        self.assertEqual(parts[1]["type"], "image_url")
+        self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+
+    def test_anthropic_content_uses_source_blocks(self):
+        parts = cm._build_content("看图", [self._png()], "anthropic")
+        self.assertEqual(parts[1]["type"], "image")
+        self.assertEqual(parts[1]["source"]["media_type"], "image/png")
+
+
 if __name__ == "__main__":
     unittest.main()

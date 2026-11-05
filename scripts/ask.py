@@ -46,10 +46,12 @@ GENERIC_ORDER = [
 ]
 
 
-def route(prompt, use_llm=False, judge_provider=None):
+def route(prompt, use_llm=False, judge_provider=None, task_override=None):
     """Return (task, reason, ranked_providers) for a prompt."""
     configured = judge.configured_providers()
-    if use_llm:
+    if task_override:
+        task, reason = task_override, f"forced by {task_override} input"
+    elif use_llm:
         jp = judge_provider or judge.pick_judge_provider(configured)
         task, reason = judge.llm_classify(prompt, jp)
     else:
@@ -93,11 +95,14 @@ def main():
     ap.add_argument("--use-llm", action="store_true", help="semantic classification")
     ap.add_argument("--judge-provider", default=None)
     ap.add_argument("--no-fallback", action="store_true")
+    ap.add_argument("--image", action="append", default=None, metavar="PATH",
+                    help="attach a local image (repeatable); forces the vision route")
     ap.add_argument("--dry-run", action="store_true", help="print routing only, call nothing")
     ap.add_argument("--json", action="store_true", help="structured output on stdout")
     args = ap.parse_args()
 
-    task, reason, ranked = route(args.prompt, args.use_llm, args.judge_provider)
+    override = "vision" if args.image else None
+    task, reason, ranked = route(args.prompt, args.use_llm, args.judge_provider, override)
 
     if not ranked:
         sys.stderr.write(
@@ -128,7 +133,7 @@ def main():
     res = call_model.call_text(
         provider, args.prompt, system=args.system, temperature=args.temperature,
         max_tokens=args.max_tokens, timeout=args.timeout, model=args.model,
-        allow_fallback=not args.no_fallback,
+        allow_fallback=not args.no_fallback, images=args.image,
     )
     latency_ms = int((time.time() - started) * 1000)
 

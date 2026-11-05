@@ -14,7 +14,7 @@ import ask  # noqa: E402
 import judge  # noqa: E402
 
 CONFIGURED = {"doubao", "th-code", "th-deepseek", "th-flash", "th-kimi",
-              "th-glm", "ark-deepseek", "ark-kimi", "deepseek"}
+              "th-glm", "th-vision", "ark-deepseek", "ark-kimi", "deepseek"}
 
 
 class RouteTests(unittest.TestCase):
@@ -54,6 +54,12 @@ class RouteTests(unittest.TestCase):
             task, _, ranked = ask.route("用 Python 写个爬虫脚本")
             self.assertEqual(task, "code")
             self.assertEqual(ranked, ["doubao"])
+
+    def test_vision_override_prefers_tokenhub_vision(self):
+        task, reason, ranked = ask.route("这张图里是什么", task_override="vision")
+        self.assertEqual(task, "vision")
+        self.assertIn("forced", reason)
+        self.assertEqual(ranked[0], "th-vision")
 
     def test_ranking_is_deterministic(self):
         first = ask.route("帮我写一段小红书文案")[2]

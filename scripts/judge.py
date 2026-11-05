@@ -21,7 +21,7 @@ ROUTING = {
     "chinese":      ["doubao", "hunyuan", "th-glm", "qwen", "glm"],
     "reasoning":    ["openai", "th-deepseek", "ark-deepseek", "deepseek", "gemini"],
     "long-context": ["gemini", "th-kimi", "ark-kimi", "claude", "qwen"],
-    "vision":       ["openai", "gemini", "doubao"],
+    "vision":       ["th-vision", "gemini", "openai", "doubao"],
     "structured":   ["openai", "qwen", "th-flash", "deepseek"],
     "cheap":        ["doubao", "hunyuan", "th-flash", "ark-deepseek", "deepseek", "glm"],
     "search":       [],  # needs a web tool, no built-in model
@@ -193,6 +193,7 @@ def configured_providers():
         "th-code": "HUNYUAN_API_KEY", "th-deepseek": "HUNYUAN_API_KEY",
         "th-flash": "HUNYUAN_API_KEY", "th-kimi": "HUNYUAN_API_KEY",
         "th-glm": "HUNYUAN_API_KEY", "th-minimax": "HUNYUAN_API_KEY",
+        "th-vision": "HUNYUAN_API_KEY",
     }
     configured = {p for p, e in env_map.items() if os.environ.get(e)}
     # Providers with no usable balance are excluded from automatic routing so a
