@@ -487,6 +487,8 @@ python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
 
 CI：`.github/workflows/ci.yml` 在 Python 3.9 / 3.12 双版本跑「编译 + 单测 + 打包校验 + 脱敏冒烟」，任何一步失败即红。
 
+> Runner 固定为 `ubuntu-24.04`，不用 `ubuntu-latest`。GitHub 已把 `ubuntu-latest` 迁到 Ubuntu 26.04，而官方 Python 构建只提供到 24.04，`ubuntu-latest` 上 3.9 会在 `setup-python` 一步直接报 `version '3.9' was not found for Ubuntu 26.04`——和我们代码无关。Python 3.9 已于 2025-10 停止维护，后续可考虑把矩阵换成 3.10 / 3.13。
+
 ## 接下来接入哪些 AI
 
 **结论：不用一家家装。** 方舟 + TokenHub 两个 Key 已实测覆盖豆包 / 混元 Hy4 /
