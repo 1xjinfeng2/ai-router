@@ -1,0 +1,20 @@
+# Secrets — never commit
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Generated artifacts / distributable zips
+*.zip
+dist/
+build/
+
+# Local editor / tooling
+.idea/
+.vscode/
+*.log
