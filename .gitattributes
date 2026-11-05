@@ -1,0 +1,7 @@
+# Keep LF line endings across platforms (Python scripts + docs)
+* text=auto eol=lf
+
+# Never normalize binary artifacts
+*.png binary
+*.jpg binary
+*.zip binary
