@@ -134,6 +134,30 @@ def configured_providers():
     return {p for p, e in env_map.items() if os.environ.get(e)}
 
 
+def health_adjusted(ranked, min_calls=3, min_rate=0.6):
+    """Demote providers whose recorded success rate is poor.
+
+    Reads usage.db (written by the reliability layer). A provider needs at least
+    `min_calls` recorded calls before it can be demoted, so a single hiccup never
+    reorders the routing table. Ordering inside each group is preserved.
+    """
+    if not ranked:
+        return ranked
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import usage
+        rows = usage.health()
+    except Exception:  # noqa: BLE001
+        return ranked
+    stats = {r[0]: (r[1] or 0, r[2] or 0) for r in rows}
+    good, bad = [], []
+    for p in ranked:
+        calls, ok = stats.get(p, (0, 0))
+        rate = (ok / calls) if calls else 1.0
+        (bad if calls >= min_calls and rate < min_rate else good).append(p)
+    return good + bad
+
+
 def main():
     ap = argparse.ArgumentParser(description="Classify a prompt and recommend a model.")
     ap.add_argument("--prompt", required=True)

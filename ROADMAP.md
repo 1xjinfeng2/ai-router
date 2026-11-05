@@ -33,20 +33,24 @@
 
 ## 三、执行路线图
 
-### Phase 1 · 可靠性与安全（立即，1-2 周量级）
-1. `call_model.py` 增加统一重试层：指数退避、错误分类（429/5xx 重试，402/401 直接降级）、按任务类型的备用 provider 降级链
-2. 推理模型 token 档案：`REASONING_FLOOR = {model: min_tokens}`，空正文自动提额重试一次，降级路径记入 usage
-3. 隐私库/usage.db 生命周期：`--expire N天` TTL 自动清理 + 启动时过期清扫；提供 `--encrypt`（口令派生密钥，可选依赖）
+### Phase 1 · 可靠性与安全（已完成 ✅）
+1. ✅ `call_model.py` 统一重试层：错误分类（429/5xx 退避重试，401/402/403/404 立即降级）、`FALLBACK_CHAINS` 按供应商交叉备用链、`call_text()` 一次性返回降级路径
+2. ✅ 推理模型 token 档案：`REASONING_FLOOR`（th-deepseek/th-kimi/hunyuan 等 4096 起），空正文自动翻倍重试一次（上限 8192），仍空则进入降级
+3. ✅ 隐私库/usage.db 生命周期：`AI_ROUTER_VAULT_TTL_DAYS`（默认 7 天，脱敏时自动清扫）、`AI_ROUTER_USAGE_TTL_DAYS`、`--expire N`、`privacy.py --status`
+4. ✅ 可选加密：`cryptography` + `AI_ROUTER_VAULT_PASSPHRASE` → PBKDF2(200k)+Fernet，`enc:v1:` 前缀，`--encrypt/--decrypt`；无依赖时优雅降级并明确提示
 
-### Phase 2 · 质量保障（Phase 1 后）
-4. 单测：标准库 unittest 优先覆盖 脱敏↔还原、路由、缓存、重试降级、打包密钥扫描
-5. GitHub Actions CI：跑全部单测 + `package.py --check-only` + 编译检查
+### Phase 2 · 质量保障（已完成 ✅）
+5. ✅ 单测：`tests/` 52 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
+6. ✅ GitHub Actions CI：Python 3.9 / 3.12 双版本，编译 + 单测 + `package.py --check-only` + 脱敏冒烟
 
-### Phase 3 · 体验增强（按需）
-6. 流式输出：先单模型层 SSE，后接中转链路（含占位符流式还原）
-7. 可选打分投票模式（`--vote`），默认关闭
-8. usage.db 增加延迟/错误/降级/缓存命中等维度报表 → 验证后供 judge 健康度降权
+### Phase 3 · 体验增强（已完成 ✅）
+7. ✅ 流式输出：`call_model.py --stream`（OpenAI/Anthropic 双 SSE 分支）、`relay.py --stream --no-organize`；`privacy.StreamRestorer` 处理跨 chunk 占位符
+8. ✅ 打分投票：`relay.py --vote`（仅 ≥2 路时启用，裁判模型按 1-10 打分并返回最优，评分表打到 stderr，裁判调用计费入 usage）
+9. ✅ 观测量化与反哺：usage 新增 `latency_ms/error/fallback_from` 字段、`--health` 成功率报表、`judge.health_adjusted()` 把成功率 <60% 且调用 ≥3 次的供应商降权
 
-### 明确后置
-- Web UI（9/9 一致暂缓）
-- 本地 Ollama 模型接入（评审未提及，待以上完成后评估）
+### 仍开放（按价值排序）
+- [ ] 加密默认开启的引导流程（首次运行提示设置口令）
+- [ ] 投票支持加权融合（现在只选最优，不做加权拼接）
+- [ ] 流式接入汇总链路（当前 organizer 需完整文本）
+- [ ] Ollama 本地模型接入（评审未提及，待以上稳定后评估）
+- [ ] Web UI（9/9 一致后置）

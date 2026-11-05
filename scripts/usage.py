@@ -23,7 +23,7 @@ import hashlib
 import json
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -73,9 +73,19 @@ def _conn():
             total_tokens INTEGER NOT NULL DEFAULT 0,
             cost REAL,
             cache_hit INTEGER NOT NULL DEFAULT 0,
-            session_id TEXT
+            session_id TEXT,
+            latency_ms INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            fallback_from TEXT
         )"""
     )
+    # Migration for databases created before the reliability columns existed.
+    have = {r[1] for r in conn.execute("PRAGMA table_info(calls)").fetchall()}
+    for col, ddl in (("latency_ms", "INTEGER NOT NULL DEFAULT 0"),
+                     ("error", "TEXT"),
+                     ("fallback_from", "TEXT")):
+        if col not in have:
+            conn.execute(f"ALTER TABLE calls ADD COLUMN {col} {ddl}")
     conn.execute(
         """CREATE TABLE IF NOT EXISTS cache(
             key TEXT PRIMARY KEY,
@@ -99,17 +109,24 @@ def estimate_cost(provider, model, prompt_tokens, completion_tokens):
 
 
 def record(provider, model, prompt_tokens=0, completion_tokens=0,
-           total_tokens=0, cache_hit=0, session_id=None):
-    """Insert one call record (or a cache-hit marker when cache_hit=1)."""
+           total_tokens=0, cache_hit=0, session_id=None,
+           latency_ms=0, error=None, fallback_from=None):
+    """Insert one call record (or a cache-hit marker when cache_hit=1).
+
+    latency_ms / error / fallback_from are filled by the reliability layer so the
+    report can show how often a provider failed or a backup had to answer.
+    """
     cost = estimate_cost(provider, model, prompt_tokens, completion_tokens)
     ts = datetime.now(timezone.utc).isoformat()
     try:
         conn = _conn()
         conn.execute(
             "INSERT INTO calls(ts,provider,model,prompt_tokens,completion_tokens,"
-            "total_tokens,cost,cache_hit,session_id) VALUES(?,?,?,?,?,?,?,?,?)",
+            "total_tokens,cost,cache_hit,session_id,latency_ms,error,fallback_from) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (ts, provider, model, prompt_tokens, completion_tokens,
-             total_tokens, cost, cache_hit, session_id),
+             total_tokens, cost, cache_hit, session_id, latency_ms or 0,
+             error, fallback_from),
         )
         conn.commit()
         conn.close()
@@ -198,6 +215,43 @@ def clear():
     conn.close()
 
 
+def expire(days):
+    """Delete call records and cache entries older than `days`. 0 disables.
+
+    Keeps usage.db from growing without bound (and shortens the window in which
+    local telemetry can be read if the machine is compromised).
+    """
+    if not days:
+        return 0, 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()
+    conn = _conn()
+    try:
+        n_calls = conn.execute("DELETE FROM calls WHERE ts < ?", (cutoff,)).rowcount
+        n_cache = conn.execute("DELETE FROM cache WHERE ts < ?", (cutoff,)).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return n_calls, n_cache
+
+
+def health(since=None, limit=5):
+    """Per-provider success rate / latency / fallback counts for routing health."""
+    conn = _conn()
+    q = ("SELECT provider, COUNT(*) AS calls, "
+         "SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) AS ok, "
+         "COALESCE(AVG(CASE WHEN latency_ms > 0 THEN latency_ms END), 0) AS avg_ms, "
+         "SUM(CASE WHEN fallback_from IS NOT NULL THEN 1 ELSE 0 END) AS fallbacks "
+         "FROM calls")
+    params = []
+    if since:
+        q += " WHERE ts >= ?"
+        params.append(since)
+    q += " GROUP BY provider ORDER BY calls DESC"
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return rows[:limit]
+
+
 def _fmt_cost(c):
     return "n/a" if c is None else f"¥{c:.4f}"
 
@@ -207,6 +261,10 @@ def main():
     p.add_argument("--report", action="store_true", help="print usage report")
     p.add_argument("--export", metavar="PATH", help="export report as CSV")
     p.add_argument("--clear", action="store_true", help="delete all usage + cache data")
+    p.add_argument("--expire", type=int, metavar="DAYS",
+                   help="delete calls/cache older than DAYS (0 disables)")
+    p.add_argument("--health", action="store_true",
+                   help="per-provider success rate, latency and fallback counts")
     p.add_argument("--since", help="filter rows since ISO timestamp (e.g. 2026-11-05)")
     p.add_argument("--provider", help="filter by provider")
     args = p.parse_args()
@@ -214,6 +272,25 @@ def main():
     if args.clear:
         clear()
         print("usage.db cleared (calls + cache).")
+        return
+
+    if args.expire is not None:
+        nc, ncache = expire(args.expire)
+        print(f"expired {nc} call record(s) and {ncache} cache entr(ies) "
+              f"older than {args.expire} day(s)")
+        return
+
+    if args.health:
+        print("=== provider health ===")
+        print(f"{'provider':<14}{'calls':>7}{'ok':>6}{'fail':>6}{'rate':>8}"
+              f"{'avg_ms':>9}{'fallbacks':>11}")
+        print("-" * 62)
+        for prov, calls, ok, avg_ms, fb in health(args.since):
+            ok = ok or 0
+            rate = (ok / calls * 100) if calls else 0
+            print(f"{prov:<14}{calls:>7}{ok:>6}{calls - ok:>6}{rate:>7.0f}%"
+                  f"{avg_ms:>9.0f}{fb:>11}")
+        print("-" * 62)
         return
 
     if not (args.report or args.export):

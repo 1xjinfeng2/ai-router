@@ -11,8 +11,11 @@
 - 🔑 **两个聚合平台驱动**：火山方舟 + 腾讯云 TokenHub，两个 Key 覆盖 180+ 模型，无需逐家申请官方 Key
 - 🪶 **零依赖**：调用脚本仅用 Python 标准库，无需 `pip install`
 - 🔍 **接入自检**：一条命令判断 Key 是否有效、站点/项目是否匹配、模型 ID 是否过期
-- 🗳️ **多模型对比 / 投票**：一键让多个模型同时回答并汇总
+- 🗳️ **多模型对比 / 投票**：一键让多个模型同时回答并汇总；`--vote` 让裁判打分选最优
 - 📊 **费用与用量统计**：本地记录每次调用的 token 数与估算费用（CNY），相同请求可走缓存省额度
+- 🛡️ **失败重试 + 跨模型降级**：限流/5xx 指数退避重试，401/402 立即切备用模型，推理模型空正文自动扩容重试
+- 🌊 **流式输出**：`--stream` 边生成边打印，隐私占位符跨 chunk 也能正确还原
+- 🧪 **52 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、打包密钥扫描全覆盖
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -290,6 +293,56 @@ python scripts/privacy.py --clear-all             # 清空整个库
 
 > ⚠️ **安全边界**：隐私库是明文 SQLite 文件，与 `.env` 同等敏感——本机不要共享该文件；公开仓库前先 `privacy.py --clear-all`。它防的是"外部 AI 拿到你的隐私"，不防"本机被入侵 / 误提交"。
 
+## 可靠性与容错（Retry / Fallback）
+
+这不是纸上功能——某一轮「把项目发给所有 AI 评审」时，12 路并发里 5 路直接报废：限流读超时、`ark-kimi` 服务端 500、`deepseek` 余额 402、两个推理模型正文为空。现在这些都有兜底。
+
+**错误分类（决定「重试」还是「换人」）**
+
+| 情况 | 例子 | 处理 |
+|---|---|---|
+| 限流 / 服务端抖动 / 网络超时 | 429、5xx、read timeout | 指数退避重试（默认 3 次，1s→2s→4s） |
+| 认证失败 / 余额不足 / 模型不存在 | 401、402、403、404 | **不浪费次数**，立刻切备用模型 |
+| 推理模型空正文 | `reasoning_content` 吃光 token | 自动把 `max_tokens` 翻倍重试一次（上限 8192） |
+
+**备用链（按供应商交叉配置，避免同一家整体故障）**
+
+```text
+doubao → ark-deepseek → th-flash        ark-kimi → th-kimi → th-code
+deepseek → th-flash → doubao            th-deepseek → doubao → th-flash
+claude → openai → th-deepseek           th-flash → doubao → deepseek
+```
+完整表见 `scripts/call_model.py` 的 `FALLBACK_CHAINS`；推理模型的 token 下限见 `REASONING_FLOOR`（`th-deepseek` / `th-kimi` / `hunyuan` 等默认 4096 起）。
+
+```bash
+# deepseek 余额为 0 时，自动由 th-flash 回答（stderr 会写明降级路径）
+python scripts/call_model.py --provider deepseek --prompt "你好"
+
+# 不想让它偷偷换模型（例如做严格对比）
+python scripts/call_model.py --provider doubao --prompt "..." --no-fallback
+
+# 网络差时加大重试次数
+python scripts/call_model.py --provider doubao --prompt "..." --retries 5
+
+# 只给 512 token 也会自动抬到推理模型的下限
+python scripts/call_model.py --provider th-deepseek --prompt "..." --max-tokens 512
+```
+
+中转站同样继承这套可靠性（可用 `--no-fallback` 关闭），并且每次降级都会写进 `usage.db` 的 `fallback_from` 字段。
+
+## 流式输出与打分投票
+
+```bash
+# 流式：边生成边打印（需配合 --no-organize，因为汇总需要完整文本）
+python scripts/relay.py --prompt "写一段产品介绍" --providers th-flash --no-organize --stream
+python scripts/call_model.py --provider doubao --prompt "..." --stream
+
+# 投票：让裁判模型给每路回答打分，直接返回最高分那份（并打印评分表）
+python scripts/relay.py --prompt "解释什么是多模型路由" --providers th-flash,doubao,th-glm --vote
+```
+
+流式模式下隐私还原也不会漏：`privacy.StreamRestorer` 会把跨 chunk 被切断的 `<PII_PHO` + `NE_1>` 拼回完整占位符再替换，不会把半截占位符喷到屏幕上。
+
 ## 费用与用量统计（Usage Metering）
 
 本地记录**每一次**模型调用的 token 用量与**估算费用**（CNY），让你对自己接的方舟 / TokenHub / DeepSeek 等多家付费 API 到底花了多少一目了然；并支持把**完全相同的请求**缓存到本地，第二次起直接命中缓存、不再消耗额度。所有数据只存在本机 `usage.db`（已 gitignore、不进包）。
@@ -327,6 +380,57 @@ TOTAL                                        4     2810     1230     4040     ¥
 
 **关于价格**：`scripts/usage.py` 顶部的 `PRICES` 表是**近似值**（CNY / 每 1M token，in/out），按 2026-11-05 各家公开定价整理，仅供估算。token 数是各家 API 返回的真实值（精确），只有金额是估算。请按你实际签约价修改 `PRICES`；表里没有的模型会显示 `n/a`。
 
+**供应商健康度**（由可靠性层写入的成功率 / 延迟 / 降级次数；`judge` 会自动把成功率低于 60% 且调用数 ≥3 的供应商降权）：
+
+```bash
+python scripts/usage.py --health
+```
+```
+provider        calls    ok  fail    rate   avg_ms  fallbacks
+--------------------------------------------------------------
+th-flash            3     3     0    100%     2209          1
+doubao              4     1     3     25%      812          0
+```
+
+## 数据留存与可选加密
+
+隐私库和用量库都是本机文件，默认明文。两条防线：
+
+**1) TTL 自动过期**（默认开启，隐私库 7 天）
+
+```bash
+python scripts/privacy.py --status          # 查看行数 / 加密状态 / TTL
+python scripts/privacy.py --expire 3        # 手动清掉 3 天前的映射
+python scripts/usage.py --expire 30         # 清理 30 天前的计量与缓存
+
+export AI_ROUTER_VAULT_TTL_DAYS=7           # 每次脱敏后自动清扫（0 = 关闭）
+export AI_ROUTER_USAGE_TTL_DAYS=30          # 每次 relay 启动时清扫用量库（0 = 关闭）
+```
+
+**2) 可选加密**（口令派生密钥 + Fernet，核心仍零依赖——只有启用时才需要 `cryptography`）
+
+```bash
+pip install cryptography                    # 可选依赖
+export AI_ROUTER_VAULT_PASSPHRASE='your-passphrase'
+python scripts/privacy.py --encrypt         # 把已有明文行就地加密（enc:v1: 前缀）
+python scripts/privacy.py --decrypt         # 需要时还原为明文
+python scripts/privacy.py --restore --session <sid> --text "<PII_PHONE_1>"   # 读操作自动解密
+```
+
+没装 `cryptography` 时不会报错崩溃，而是明确提示「加密不可用」并保持明文——保证零依赖安装仍能正常工作。⚠️ 口令丢失 = 数据无法恢复；加密防的是「库文件被拷走」，不防本机被入侵。
+
+## 测试与 CI
+
+```bash
+python -m unittest discover -s tests -v     # 52 项单测，全部标准库 unittest
+python -m compileall -q scripts tests       # 语法检查
+python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
+```
+
+覆盖范围：脱敏↔还原往返（含跨 chunk 流式还原）、严格模式姓名/地址、TTL 过期、加密往返、错误分类、退避重试、跨模型降级、推理模型 token 扩容、缓存键敏感性、计量聚合、健康度统计、打包排除与密钥扫描误报。
+
+CI：`.github/workflows/ci.yml` 在 Python 3.9 / 3.12 双版本跑「编译 + 单测 + 打包校验 + 脱敏冒烟」，任何一步失败即红。
+
 ## 接下来接入哪些 AI
 
 **结论：不用一家家装。** 方舟 + TokenHub 两个 Key 已实测覆盖豆包 / 混元 Hy4 /
@@ -352,14 +456,22 @@ ai-router/
 ├── .env.example          # API Key 模板（含各家申请地址）
 ├── .gitignore            # 排除 .env 与缓存
 ├── scripts/
-│   ├── call_model.py     # 统一调用脚本（OpenAI 兼容 + Claude 分支）
-│   ├── judge.py          # 任务分类与模型推荐
+│   ├── call_model.py     # 统一调用 + 重试/降级 + 推理模型 token 档案 + 流式
+│   ├── judge.py          # 任务分类、模型推荐、按历史成功率降权
 │   ├── check_provider.py # 接入自检 / 列出可用模型 ID
 │   ├── env_loader.py     # 纯标准库 .env 加载器
-│   ├── privacy.py        # 本地隐私库：脱敏 / 还原 / 管理（零依赖）
-│   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总 → 还原
-│   ├── usage.py          # 本地用量计量 + 响应缓存（token/费用统计，零依赖）
-│   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 隐私库 / 计量库）
+│   ├── privacy.py        # 本地隐私库：脱敏 / 还原 / TTL / 可选加密 / 流式还原
+│   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总/投票 → 还原
+│   ├── usage.py          # 本地用量计量 + 响应缓存 + 健康度报表
+│   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 各类 .db）
+├── tests/                # 52 项标准库单测（无需任何依赖）
+│   ├── test_privacy.py   # 脱敏↔还原、TTL、加密、流式还原
+│   ├── test_call_model.py# 错误分类、退避重试、跨模型降级、token 扩容
+│   ├── test_usage.py     # 计量聚合、缓存键、健康度、过期清理
+│   ├── test_judge.py     # 路由分类、健康度降权
+│   └── test_package.py   # 打包排除与密钥扫描
+├── .github/workflows/
+│   └── ci.yml            # Python 3.9/3.12：编译 + 单测 + 打包校验 + 脱敏冒烟
 └── references/
     ├── models.md         # 供应商端点、模型清单、能力标签、核实状态
     ├── onboarding.md     # 接下来接入哪些 AI（优先级与免费额度）
@@ -369,9 +481,15 @@ ai-router/
 ## 扩展新供应商
 
 1. 在 `scripts/call_model.py` 的 `PROVIDERS` 增加一行（base_url + 密钥变量 + 默认模型 + 模式）。
-2. OpenAI 兼容的无需改逻辑；Anthropic 风格需新增 `call_*` 函数与分支。
-3. 在 `.env.example` 与 `references/models.md` 补充密钥与模型信息。
-4. 更新 `SKILL.md` 路由表与 `scripts/judge.py` 的 `ROUTING` / `KEYWORDS`。
+2. 在 `FALLBACK_CHAINS` 给它配 1-2 个备用模型，推理型模型再加进 `REASONING_FLOOR` 设 token 下限。
+3. OpenAI 兼容的无需改逻辑；Anthropic 风格需新增 `call_*` 函数与分支。
+4. 在 `.env.example` 与 `references/models.md` 补充密钥与模型信息。
+5. 更新 `SKILL.md` 路由表与 `scripts/judge.py` 的 `ROUTING` / `KEYWORDS`，并在 `tests/` 补一条路由用例。
+
+```bash
+python -m unittest discover -s tests -v   # 新增供应商后先跑一遍
+python scripts/check_provider.py --provider <name> --scan
+```
 
 ## 打包分发
 

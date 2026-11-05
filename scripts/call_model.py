@@ -15,7 +15,9 @@ No third-party dependencies: uses only the Python standard library.
 import argparse
 import json
 import os
+import socket
 import sys
+import time
 import urllib.request
 import urllib.error
 
@@ -113,6 +115,99 @@ def extract_text(resp, mode):
     return resp["choices"][0]["message"]["content"]
 
 
+# ---------------------------------------------------------------------------
+# Streaming (Server-Sent Events). No third-party dependencies.
+# ---------------------------------------------------------------------------
+def _iter_sse(resp):
+    """Yield the JSON payload of each `data:` line from an SSE response."""
+    for raw in resp:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line or line.startswith(":"):
+            continue
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload in ("", "[DONE]"):
+            if payload == "[DONE]":
+                return
+            continue
+        try:
+            yield json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+
+def stream_openai(base_url, api_key, model, prompt, system, temperature,
+                  max_tokens, top_p, timeout):
+    url = base_url.rstrip("/") + "/chat/completions"
+    messages = ([{"role": "system", "content": system}] if system else []) + \
+               [{"role": "user", "content": prompt}]
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens,
+               "stream": True}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if top_p is not None:
+        payload["top_p"] = top_p
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                 method="POST")
+    req.add_header("Authorization", f"Bearer {api_key}")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        for obj in _iter_sse(resp):
+            for choice in obj.get("choices") or []:
+                delta = choice.get("delta") or {}
+                piece = delta.get("content")
+                if piece:
+                    yield piece
+
+
+def stream_anthropic(base_url, api_key, model, prompt, system, temperature,
+                     max_tokens, top_p, timeout):
+    url = base_url.rstrip("/") + "/messages"
+    payload = {"model": model, "max_tokens": max_tokens, "stream": True,
+               "messages": [{"role": "user", "content": prompt}]}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if system:
+        payload["system"] = system
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                 method="POST")
+    req.add_header("x-api-key", api_key)
+    req.add_header("anthropic-version", "2023-06-01")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        for obj in _iter_sse(resp):
+            if obj.get("type") == "content_block_delta":
+                delta = obj.get("delta") or {}
+                if delta.get("type") == "text_delta" and delta.get("text"):
+                    yield delta["text"]
+
+
+def stream_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
+                top_p=None, timeout=60, model=None):
+    """Yield text chunks from one provider. Retries once on a transient error
+    that happens before the first chunk arrives; fallbacks are NOT attempted
+    because the caller has already started printing output."""
+    if provider not in PROVIDERS:
+        raise ValueError(f"unknown provider '{provider}'")
+    base_url, key_env, default_model, mode = PROVIDERS[provider]
+    api_key = os.environ.get(key_env)
+    if not api_key:
+        raise RuntimeError(f"missing key {key_env}")
+    model = model or default_model
+    fn = stream_anthropic if mode == "anthropic" else stream_openai
+    try:
+        yield from fn(base_url, api_key, model, prompt, system, temperature,
+                      max_tokens, top_p, timeout)
+    except urllib.error.HTTPError as e:
+        status, retryable, detail = classify_error(e)
+        if not retryable:
+            raise
+        time.sleep(RETRY_BASE_DELAY)
+        yield from fn(base_url, api_key, model, prompt, system, temperature,
+                      max_tokens, top_p, timeout)
+
+
 def extract_usage(resp, mode):
     """Return {prompt_tokens, completion_tokens, total_tokens} from a raw resp."""
     try:
@@ -131,6 +226,216 @@ def extract_usage(resp, mode):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Reliability layer: error classification, exponential-backoff retry, fallback
+# ---------------------------------------------------------------------------
+# Retryable = transient (rate limit, server hiccup, timeout). Fatal = retrying
+# is pointless (bad key, no balance, unknown model) -> jump straight to a backup
+# provider. Codes not listed fall back to "5xx retryable, 4xx fatal".
+RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529}
+FATAL_STATUS = {400, 401, 402, 403, 404, 405, 413, 415, 422}
+
+RETRY_ATTEMPTS = 3          # total tries per provider (1 initial + 2 retries)
+RETRY_BASE_DELAY = 1.0      # seconds; doubled each retry (1s, 2s, 4s ...)
+RETRY_MAX_DELAY = 8.0
+
+# Reasoning models burn tokens on hidden thinking. If max_tokens is too small the
+# visible body comes back empty. These are per-provider minimums (tokens).
+REASONING_FLOOR = {
+    "th-deepseek": 4096,
+    "th-kimi": 4096,
+    "kimi": 4096,
+    "ark-kimi": 4096,
+    "hunyuan": 4096,
+    "deepseek": 2048,
+    "ark-deepseek": 2048,
+}
+EMPTY_BODY_RETRY_CAP = 8192  # never auto-expand beyond this
+
+
+def effective_max_tokens(provider, requested):
+    """Apply the reasoning-model floor so we do not get empty bodies."""
+    return max(int(requested or 0), REASONING_FLOOR.get(provider, 0))
+
+
+def classify_error(exc):
+    """Map an exception to (status|None, retryable: bool, detail: str)."""
+    if isinstance(exc, urllib.error.HTTPError):
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:400]
+        except Exception:  # noqa: BLE001
+            pass
+        retryable = exc.code in RETRY_STATUS or exc.code >= 500
+        if exc.code in FATAL_STATUS:
+            retryable = False
+        return exc.code, retryable, detail or f"HTTP {exc.code}"
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return None, True, f"timeout: {exc}"
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return None, True, f"timeout: {reason}"
+        return None, True, f"network: {reason}"
+    if isinstance(exc, (ConnectionError, OSError)):
+        return None, True, f"network: {exc}"
+    return None, False, f"{type(exc).__name__}: {exc}"
+
+
+def call_once(provider, prompt, system=None, temperature=None, max_tokens=2048,
+              top_p=None, timeout=60, model=None):
+    """One raw API call. Raises the original exception on failure."""
+    if provider not in PROVIDERS:
+        raise ValueError(f"unknown provider '{provider}'")
+    base_url, key_env, default_model, mode = PROVIDERS[provider]
+    api_key = os.environ.get(key_env)
+    if not api_key:
+        raise RuntimeError(f"missing key {key_env}")
+    model = model or default_model
+    if mode == "anthropic":
+        return call_anthropic(base_url, api_key, model, prompt, system,
+                              temperature, max_tokens, top_p, timeout)
+    return call_openai(base_url, api_key, model, prompt, system,
+                       temperature, max_tokens, top_p, timeout)
+
+
+def call_with_retry(provider, prompt, system=None, temperature=None,
+                    max_tokens=2048, top_p=None, timeout=60, model=None,
+                    attempts=RETRY_ATTEMPTS, log=None):
+    """Call one provider with exponential backoff on transient errors.
+
+    Returns (resp, model, attempts_used, errors) where errors is a list of
+    (status, detail) tuples collected along the way. Raises the last exception
+    if every attempt failed or the error was fatal.
+    """
+    errs = []
+    last = None
+    for i in range(attempts):
+        try:
+            resp = call_once(provider, prompt, system, temperature, max_tokens,
+                             top_p, timeout, model)
+            return resp, (model or PROVIDERS[provider][2]), i + 1, errs
+        except Exception as e:  # noqa: BLE001
+            status, retryable, detail = classify_error(e)
+            errs.append((status, detail))
+            last = e
+            if not retryable or i == attempts - 1:
+                raise
+            delay = min(RETRY_BASE_DELAY * (2 ** i), RETRY_MAX_DELAY)
+            if log:
+                log(f"{provider}: {detail} -> retry {i + 1}/{attempts - 1} in {delay:.1f}s")
+            time.sleep(delay)
+    raise last  # pragma: no cover
+
+
+def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
+              top_p=None, timeout=60, model=None, allow_fallback=True,
+              log=None):
+    """Call a provider and return a dict describing the outcome.
+
+    Keys: text, error, status, usage, provider (actually used), model,
+          attempted (list of providers tried), retried (bool), empty_retry (bool)
+
+    Behaviour:
+      * transient errors are retried with backoff
+      * an empty body from a reasoning model is retried once with a bigger
+        token budget (capped at EMPTY_BODY_RETRY_CAP)
+      * if the primary provider still fails and allow_fallback is on, walk
+        FALLBACK_CHAINS[provider] and use the first one that answers
+    """
+    log = log or (lambda m: None)
+    chain = [provider]
+    if allow_fallback:
+        chain += [p for p in FALLBACK_CHAINS.get(provider, []) if p not in chain]
+    attempted = []
+    budget = effective_max_tokens(provider, max_tokens)
+    last_err, last_status = "no provider answered", None
+
+    for idx, prov in enumerate(chain):
+        if prov not in PROVIDERS:
+            continue
+        env = PROVIDERS[prov][1]
+        if not os.environ.get(env):
+            log(f"skip fallback '{prov}': missing {env}")
+            continue
+        # Fallbacks get the same reasoning-aware budget as their own floor.
+        prov_budget = effective_max_tokens(prov, budget)
+        attempted.append(prov)
+        try:
+            resp, used_model, tries, errs = call_with_retry(
+                prov, prompt, system, temperature, prov_budget, top_p, timeout,
+                model=None, log=log)
+        except Exception as e:  # noqa: BLE001
+            status, retryable, detail = classify_error(e)
+            last_err, last_status = detail, status
+            log(f"{prov}: failed ({'retryable' if retryable else 'fatal'}): {detail}")
+            continue
+
+        text = (extract_text(resp, PROVIDERS[prov][3]) or "").strip()
+        u = extract_usage(resp, PROVIDERS[prov][3])
+        empty_retry = False
+        if not text and prov_budget < EMPTY_BODY_RETRY_CAP:
+            # Reasoning model spent everything on hidden thinking: try once more
+            # with a doubled budget (bounded), then give up on this provider.
+            bigger = min(prov_budget * 2, EMPTY_BODY_RETRY_CAP)
+            log(f"{prov}: empty body at {prov_budget} tokens -> retry once at {bigger}")
+            empty_retry = True
+            try:
+                resp2, used_model, tries2, _ = call_with_retry(
+                    prov, prompt, system, temperature, bigger, top_p, timeout,
+                    model=None, log=log)
+                text2 = (extract_text(resp2, PROVIDERS[prov][3]) or "").strip()
+                if text2:
+                    text, resp, u = text2, resp2, extract_usage(resp2, PROVIDERS[prov][3])
+            except Exception as e:  # noqa: BLE001
+                status, _r, detail = classify_error(e)
+                log(f"{prov}: empty-body retry failed: {detail}")
+        if not text:
+            last_err, last_status = "empty body (model produced no visible text)", None
+            log(f"{prov}: empty body even after retry; trying fallback")
+            continue
+        if idx > 0:
+            log(f"answered by fallback '{prov}' (primary '{provider}' failed)")
+        return {
+            "text": text, "error": None, "status": None, "usage": u,
+            "provider": prov, "model": used_model, "attempted": attempted,
+            "retried": tries > 1 or empty_retry, "empty_retry": empty_retry,
+            "fallback_from": provider if prov != provider else None,
+        }
+
+    return {
+        "text": None, "error": last_err, "status": last_status, "usage": None,
+        "provider": provider, "model": PROVIDERS.get(provider, ("", "", "", ""))[2],
+        "attempted": attempted, "retried": len(attempted) > 1, "empty_retry": False,
+        "fallback_from": None,
+    }
+
+
+# When a provider dies, these are the backups tried in order. Chooses a model of
+# similar capability from a different vendor so one outage cannot kill a task.
+FALLBACK_CHAINS = {
+    "doubao":       ["ark-deepseek", "th-flash"],
+    "ark-deepseek": ["doubao", "th-flash"],
+    "ark-kimi":     ["th-kimi", "th-code"],
+    "ark-glm":      ["th-glm", "th-flash"],
+    "deepseek":     ["th-flash", "doubao"],
+    "kimi":         ["th-kimi", "ark-kimi"],
+    "glm":          ["th-glm", "ark-glm"],
+    "qwen":         ["th-flash", "doubao"],
+    "hunyuan":      ["th-deepseek", "doubao"],
+    "gemini":       ["doubao", "th-flash"],
+    "openai":       ["claude", "doubao"],
+    "claude":       ["openai", "th-deepseek"],
+    "ernie":        ["th-flash", "doubao"],
+    "th-code":      ["ark-kimi", "th-kimi"],
+    "th-deepseek":  ["doubao", "th-flash"],
+    "th-flash":     ["doubao", "deepseek"],
+    "th-kimi":      ["ark-kimi", "th-code"],
+    "th-glm":       ["ark-glm", "th-flash"],
+    "th-minimax":   ["th-flash", "doubao"],
+}
+
+
 def main():
     p = argparse.ArgumentParser(description="Unified LLM caller for multi-provider routing.")
     p.add_argument("--provider", required=True, choices=list(PROVIDERS.keys()))
@@ -144,6 +449,12 @@ def main():
                    help="nucleus sampling; omit to use the model's default")
     p.add_argument("--timeout", type=int, default=60)
     p.add_argument("--json", action="store_true", help="print full raw JSON response")
+    p.add_argument("--retries", type=int, default=RETRY_ATTEMPTS,
+                   help=f"tries per provider on transient errors (default {RETRY_ATTEMPTS})")
+    p.add_argument("--no-fallback", action="store_true",
+                   help="do not switch to a backup provider when this one fails")
+    p.add_argument("--stream", action="store_true",
+                   help="stream the answer with SSE (prints as it arrives)")
     args = p.parse_args()
 
     base_url, key_env, default_model, mode = PROVIDERS[args.provider]
@@ -156,42 +467,93 @@ def main():
         sys.exit(2)
 
     model = args.model or default_model
+    started = time.time()
 
-    try:
-        if mode == "anthropic":
-            resp = call_anthropic(base_url, api_key, model, args.prompt, args.system,
-                                  args.temperature, args.max_tokens, args.top_p, args.timeout)
-        else:
-            resp = call_openai(base_url, api_key, model, args.prompt, args.system,
-                               args.temperature, args.max_tokens, args.top_p, args.timeout)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", "replace")
-        sys.stderr.write(f"[ai-router] HTTP {e.code} from {args.provider}: {body}\n")
-        sys.exit(3)
-    except Exception as e:  # noqa: BLE001
-        sys.stderr.write(f"[ai-router] ERROR calling {args.provider}: {e}\n")
-        sys.exit(4)
+    def _log(msg):
+        sys.stderr.write(f"[ai-router] {msg}\n")
 
+    if args.stream:
+        try:
+            for chunk in stream_text(args.provider, args.prompt, args.system,
+                                     args.temperature,
+                                     effective_max_tokens(args.provider, args.max_tokens),
+                                     args.top_p, args.timeout, args.model):
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
+            sys.stdout.write("\n")
+        except Exception as e:  # noqa: BLE001
+            status, _retryable, detail = classify_error(e)
+            sys.stderr.write(
+                f"[ai-router] {'HTTP ' + str(status) if status else 'ERROR'} while "
+                f"streaming from {args.provider}: {detail}\n")
+            sys.exit(3 if status else 4)
+        try:
+            from usage import record as _record_stream
+            _record_stream(args.provider, model, 0, 0, 0,
+                           latency_ms=int((time.time() - started) * 1000),
+                           error="streamed (token usage not reported by SSE)")
+        except Exception:  # noqa: BLE001
+            pass
+        return
+
+    res = None
+    resp = None
     if args.json:
+        # Raw JSON output implies "show me exactly what this provider returned",
+        # so we retry but never switch providers behind the caller's back.
+        try:
+            resp, used_model, tries, _ = call_with_retry(
+                args.provider, args.prompt, args.system, args.temperature,
+                effective_max_tokens(args.provider, args.max_tokens), args.top_p,
+                args.timeout, args.model, attempts=max(1, args.retries), log=_log)
+        except Exception as e:  # noqa: BLE001
+            status, _retryable, detail = classify_error(e)
+            sys.stderr.write(
+                f"[ai-router] {'HTTP ' + str(status) if status else 'ERROR'} from "
+                f"{args.provider}: {detail}\n")
+            sys.exit(3 if status else 4)
         print(json.dumps(resp, ensure_ascii=False, indent=2))
     else:
-        text = extract_text(resp, mode) or ""
-        if not text.strip() and mode != "anthropic":
-            message = (resp.get("choices") or [{}])[0].get("message") or {}
-            if message.get("reasoning_content"):
-                sys.stderr.write(
-                    "[ai-router] 提示：模型把 token 用于思考（reasoning_content），正文为空。"
-                    "请增大 --max-tokens（例如 --max-tokens 1024）后重试。\n"
-                )
+        res = call_text(args.provider, args.prompt, args.system, args.temperature,
+                        args.max_tokens, args.top_p, args.timeout, args.model,
+                        allow_fallback=not args.no_fallback, log=_log)
+        if res["error"]:
+            status = res["status"]
+            sys.stderr.write(
+                f"[ai-router] {'HTTP ' + str(status) if status else 'ERROR'} from "
+                f"{args.provider}: {res['error']}\n")
+            if res["attempted"]:
+                sys.stderr.write(f"[ai-router] tried: {res['attempted']}\n")
+            try:
+                from usage import record as _record_fail
+                _record_fail(args.provider, model, 0, 0, 0,
+                             latency_ms=int((time.time() - started) * 1000),
+                             error=(res["error"] or "")[:300])
+            except Exception:  # noqa: BLE001
+                pass
+            sys.exit(3 if status else 4)
+        resp = None
+        used_model = res["model"]
+        text = res["text"]
+        if res["fallback_from"]:
+            sys.stderr.write(
+                f"[ai-router] primary '{args.provider}' failed; answered by fallback '{res['provider']}'\n")
         print(text)
 
     # Metering: record this call's token usage locally (best-effort).
     try:
         from usage import record as _record_usage
-        _u = extract_usage(resp, mode)
-        if _u:
-            _record_usage(args.provider, model, _u["prompt_tokens"],
-                          _u["completion_tokens"], _u["total_tokens"])
+        u = res["usage"] if not args.json else extract_usage(resp, mode)
+        if u:
+            _record_usage(res["provider"] if not args.json else args.provider,
+                          used_model, u["prompt_tokens"], u["completion_tokens"],
+                          u["total_tokens"],
+                          latency_ms=int((time.time() - started) * 1000),
+                          fallback_from=(res["fallback_from"] if not args.json else None))
+        elif not args.json and res.get("empty_retry"):
+            _record_usage(args.provider, used_model, 0, 0, 0,
+                          latency_ms=int((time.time() - started) * 1000),
+                          error="empty body after token expansion")
     except Exception:  # noqa: BLE001
         pass
 

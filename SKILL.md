@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.0.0
+version: 1.1.0
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -184,6 +184,39 @@ When the user wants several models' views:
 2. Call `call_model.py` once per provider/model (can be parallel Bash calls).
 3. Present each answer under its own attribution header, then add a short synthesis.
 
+Prefer the built-in paths instead of hand-rolling the loop:
+
+```bash
+# score every answer with a judge model and return the winner (+ score table)
+python scripts/relay.py --prompt "..." --providers th-flash,doubao,th-glm --vote
+
+# stream a single answer live (needs --no-organize; cache is bypassed)
+python scripts/relay.py --prompt "..." --providers th-flash --no-organize --stream
+python scripts/call_model.py --provider doubao --prompt "..." --stream
+```
+
+## Reliability: Retry & Cross-Model Fallback
+
+`call_model.py` classifies every failure instead of blindly retrying:
+
+| Failure | Examples | Behaviour |
+|---|---|---|
+| Transient | 429, 5xx, read timeout | exponential backoff, 3 tries (1s→2s→4s) |
+| Fatal | 401, 402, 403, 404 | no retry, immediately switch to a backup model |
+| Empty body | reasoning model burned tokens on thinking | one retry with doubled `max_tokens` (cap 8192) |
+
+`FALLBACK_CHAINS` maps each provider to 1–2 backups from a different vendor
+(`doubao → ark-deepseek → th-flash`, `claude → openai → th-deepseek`, …).
+`REASONING_FLOOR` raises `max_tokens` to a safe minimum for reasoning models
+(`th-deepseek`, `th-kimi`, `hunyuan` → 4096). Every retry/fallback is recorded in
+`usage.db` (`fallback_from`, `latency_ms`, `error`).
+
+```bash
+python scripts/call_model.py --provider deepseek --prompt "..."   # 402 -> th-flash answers
+python scripts/call_model.py --provider doubao --prompt "..." --no-fallback
+python scripts/call_model.py --provider doubao --prompt "..." --retries 5
+```
+
 ## Judge Script
 
 ```bash
@@ -236,7 +269,17 @@ python scripts/privacy.py --list                 # list sessions + redaction cou
 python scripts/privacy.py --export --session <id> # audit a session's mappings
 python scripts/privacy.py --clear  --session <id> # delete one session
 python scripts/privacy.py --clear-all             # wipe the whole vault
+python scripts/privacy.py --status                # rows / TTL / encryption state
+python scripts/privacy.py --expire 3              # drop mappings older than 3 days
 ```
+
+Retention and optional encryption (core stays dependency-free):
+
+- `AI_ROUTER_VAULT_TTL_DAYS` (default **7**) — old mappings are swept on every redact.
+- `AI_ROUTER_USAGE_TTL_DAYS` (default 0 = off) — usage/cache rows swept at relay start.
+- Encryption is opt-in: `pip install cryptography`, export `AI_ROUTER_VAULT_PASSPHRASE`,
+  then `privacy.py --encrypt` (rows become `enc:v1:` ciphertext, PBKDF2-derived Fernet key).
+  Without the library or passphrase it degrades gracefully with a warning — never crashes.
 
 Detection levels: **default** redacts email, CN mobile, 18-digit ID, 16–19 digit
 bank card, IPv4, QQ, plus any `--custom` terms. **`--strict`** adds heuristic
@@ -245,14 +288,24 @@ they are stored only in the local vault and excluded from git and from the zip.
 
 ## Resources
 
-- `scripts/call_model.py` — unified OpenAI-compatible caller for all providers
-- `scripts/judge.py` — task classifier and model recommender
+- `scripts/call_model.py` — unified OpenAI-compatible caller: retry/backoff, cross-model fallback, reasoning token floors, SSE streaming
+- `scripts/judge.py` — task classifier, model recommender, health-based demotion
 - `scripts/check_provider.py` — provider diagnostics and available-model discovery (`--scan`)
 - `scripts/env_loader.py` — stdlib-only `.env` loader (zero dependencies)
-- `scripts/privacy.py` — local PII vault: redact / restore / manage (zero dependencies)
-- `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize → restore
-- `scripts/usage.py` — local usage metering + response cache: per-call token/cost tracking, `usage.py --report` (zero dependencies)
+- `scripts/privacy.py` — local PII vault: redact / restore / TTL / optional encryption / stream restore
+- `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize or vote → restore
+- `scripts/usage.py` — local usage metering + response cache + provider health report (`--report`, `--health`, `--expire`)
+- `tests/` — 52 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, packaging)
+- `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.9/3.12
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
 - `references/onboarding.md` — which providers to add next, priority order, free-tier comparison
 - `.env.example` — API key template with sign-up URLs per provider
+
+## Verify Before Shipping
+
+```bash
+python -m unittest discover -s tests -v   # 52 tests, stdlib only
+python -m compileall -q scripts tests
+python scripts/package.py --check-only    # structure + secret scan
+```
 - `README.md` — install, configure, use, contribute (open-source)
