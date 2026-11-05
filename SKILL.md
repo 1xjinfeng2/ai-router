@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.6.1
+version: 1.6.2
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -446,10 +446,10 @@ that reboots mid-task should never ruin a real deliverable. It falls back to
 - `scripts/env_loader.py` — stdlib-only `.env` loader (zero dependencies)
 - `scripts/privacy.py` — local PII vault: redact / restore / TTL / optional encryption / stream restore
 - `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize or vote → restore
-- `scripts/usage.py` — local usage metering + response cache + provider health report (`--report`, `--health`, `--expire`)
+- `scripts/usage.py` — local usage metering + response cache + provider health report (`--report`, `--health`, `--expire`); DB location overridable via `AI_ROUTER_USAGE_DB`
 - `scripts/update.py` — self-update from the git remote: version compare, dirty-tree guard, pull + test gate, auto rollback (`--check` / `--apply`)
 - `scripts/server.py` — HTTP service: `/ask`, `/route`, `/health`, `/providers`, `/usage`, bearer auth, rate limit
-- `tests/` — 123 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, HTTP server, custom endpoint, packaging)
+- `tests/` — 126 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, HTTP server, custom endpoint, packaging)
 - `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.10/3.13 (runner pinned to ubuntu-24.04)
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
 - `references/free-tier.md` — 免费额度领取清单：额度、限速、环境变量、不接入的理由（GitHub Models 已下线等）
@@ -460,7 +460,7 @@ that reboots mid-task should never ruin a real deliverable. It falls back to
 ## Verify Before Shipping
 
 ```bash
-python -m unittest discover -s tests -v   # 123 tests, stdlib only
+python -m unittest discover -s tests -v   # 126 tests, stdlib only
 python -m compileall -q scripts tests
 python scripts/package.py --check-only    # structure + secret scan
 ```

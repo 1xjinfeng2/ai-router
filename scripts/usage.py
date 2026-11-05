@@ -21,13 +21,17 @@ exact; only the money figure is an estimate.
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DB_PATH = HERE.parent / "usage.db"  # skill root, not inside scripts/
+# Skill root by default. Override when the skill directory must stay read-only
+# (a packaged install, a systemd unit with ProtectSystem=strict) or when tests
+# want to keep the real accounting clean.
+DB_PATH = Path(os.environ.get("AI_ROUTER_USAGE_DB") or (HERE.parent / "usage.db"))
 
 # (input_price, output_price) in CNY per 1,000,000 tokens. Approximate; edit me.
 # Keyed by exact model id first, then by provider alias as a fallback.

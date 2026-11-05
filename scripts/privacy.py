@@ -51,7 +51,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "privacy_vault.db"
+DB_PATH = Path(os.environ.get("AI_ROUTER_VAULT_DB")
+               or (Path(__file__).resolve().parent.parent / "privacy_vault.db"))
 
 ENC_PREFIX = "enc:v1:"
 DEFAULT_TTL_DAYS = int(os.environ.get("AI_ROUTER_VAULT_TTL_DAYS", "7") or 0)

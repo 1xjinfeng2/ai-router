@@ -85,5 +85,35 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(usage.total_line()[0], 1)
 
 
+class PathOverrideTests(unittest.TestCase):
+    """A packaged install (or a hardened unit) may need the DB elsewhere."""
+
+    def _resolve(self, module, env, var="DB_PATH"):
+        import os
+        import subprocess
+        root = Path(__file__).resolve().parent.parent
+        script = (f"import sys; sys.path.insert(0, r'{root / 'scripts'}'); "
+                  f"import {module}; print({module}.{var})")
+        env = dict(os.environ, **env)
+        env.pop("PYTHONPATH", None)
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                             text=True, timeout=60, env=env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def test_usage_db_honours_the_env_var(self):
+        got = self._resolve("usage", {"AI_ROUTER_USAGE_DB": "/tmp/custom/usage.db"})
+        self.assertEqual(Path(got), Path("/tmp/custom/usage.db"))
+
+    def test_vault_honours_the_env_var(self):
+        got = self._resolve("privacy", {"AI_ROUTER_VAULT_DB": "/tmp/custom/vault.db"})
+        self.assertEqual(Path(got), Path("/tmp/custom/vault.db"))
+
+    def test_usage_db_defaults_to_the_skill_root(self):
+        got = self._resolve("usage", {"AI_ROUTER_USAGE_DB": ""})
+        self.assertEqual(Path(got).name, "usage.db")
+        self.assertEqual(Path(got).parent.name, "ai-router")
+
+
 if __name__ == "__main__":
     unittest.main()
