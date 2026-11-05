@@ -42,11 +42,12 @@ import judge  # noqa: E402
 GENERIC_ORDER = [
     "doubao", "th-deepseek", "th-flash", "th-code", "th-kimi", "th-glm",
     "ark-deepseek", "ark-kimi", "ark-glm", "deepseek", "hunyuan", "kimi",
-    "qwen", "glm", "gemini", "openai", "claude", "ernie", "th-minimax",
+    "qwen", "glm", "glm-flash", "siliconflow", "groq", "openrouter", "mistral",
+    "nvidia", "gemini", "openai", "claude", "ernie", "th-minimax", "th-vision",
 ]
 
 
-def route(prompt, use_llm=False, judge_provider=None, task_override=None):
+def route(prompt, use_llm=False, judge_provider=None, task_override=None, budget=False):
     """Return (task, reason, ranked_providers) for a prompt."""
     configured = judge.configured_providers()
     if task_override:
@@ -63,6 +64,13 @@ def route(prompt, use_llm=False, judge_provider=None, task_override=None):
         # providers have no key. Fall back to any configured provider.
         ranked = [p for p in GENERIC_ORDER if p in configured]
         reason += "; fell back to generic order"
+    if budget:
+        # Keep the task-appropriate free line when one exists, otherwise take
+        # whatever free line is configured.
+        free = [p for p in ranked if p in judge.FREE_PROVIDERS] \
+            or [p for p in judge.FREE_PROVIDERS if p in configured]
+        ranked = free
+        reason += "; free tier only"
     ranked = judge.health_adjusted(ranked)
     return task, reason, ranked
 
@@ -95,6 +103,8 @@ def main():
     ap.add_argument("--use-llm", action="store_true", help="semantic classification")
     ap.add_argument("--judge-provider", default=None)
     ap.add_argument("--no-fallback", action="store_true")
+    ap.add_argument("--budget", action="store_true",
+                    help="only consider providers covered by a permanent free tier")
     ap.add_argument("--image", action="append", default=None, metavar="PATH",
                     help="attach a local image (repeatable); forces the vision route")
     ap.add_argument("--dry-run", action="store_true", help="print routing only, call nothing")
@@ -102,9 +112,16 @@ def main():
     args = ap.parse_args()
 
     override = "vision" if args.image else None
-    task, reason, ranked = route(args.prompt, args.use_llm, args.judge_provider, override)
+    task, reason, ranked = route(args.prompt, args.use_llm, args.judge_provider,
+                                 override, args.budget)
 
     if not ranked:
+        if args.budget:
+            sys.stderr.write(
+                "[ask] no free-tier provider configured. Add one of ZHIPU_API_KEY, "
+                "SILICONFLOW_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, "
+                "MISTRAL_API_KEY, NVIDIA_API_KEY (see references/free-tier.md).\n")
+            sys.exit(2)
         sys.stderr.write(
             "[ask] no provider has an API key configured. "
             "Fill .env (see .env.example) or run check_provider.py --scan.\n")

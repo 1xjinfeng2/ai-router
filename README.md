@@ -14,10 +14,11 @@
 - 🔍 **接入自检**：一条命令判断 Key 是否有效、站点/项目是否匹配、模型 ID 是否过期
 - 🗳️ **多模型对比 / 投票**：一键让多个模型同时回答并汇总；`--vote` 让裁判打分选最优
 - 📊 **费用与用量统计**：本地记录每次调用的 token 数与估算费用（CNY），相同请求可走缓存省额度
+- 🆓 **免费额度线路**：智谱 GLM-4.7-Flash、硅基流动、Groq、OpenRouter、Mistral、NVIDIA 全部接入，`--budget` 一键只用免费档
 - 🖼️ **图片理解**：`--image` 直接附本地图片（png/jpg/webp/gif/bmp），自动走视觉模型，无需单独上传接口
 - 🛡️ **失败重试 + 跨模型降级**：限流/5xx 指数退避重试，401/402 立即切备用模型，推理模型空正文自动扩容重试
 - 🌊 **流式输出**：`--stream` 边生成边打印，隐私占位符跨 chunk 也能正确还原
-- 🧪 **73 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、打包密钥扫描全覆盖
+- 🧪 **82 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、打包密钥扫描全覆盖
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -204,6 +205,17 @@ python scripts/ask.py --prompt "这张海报讲了什么？列出时间、地点
 图片会以 base64 内联进请求（OpenAI 兼容格式 / Anthropic 格式各自适配），可重复传
 `--image a.png --image b.png`。默认视觉线路是 TokenHub 的 `th-vision`，用你已有的
 `HUNYUAN_API_KEY` 即可，不需要再申请新 Key。
+
+**只用免费额度（一分钱不花）**
+
+```bash
+python scripts/ask.py --prompt "把这段会议通知压缩到 100 字" --budget
+# [ask] task=chinese (matched keywords ...) ; free tier only -> glm-flash / glm-4.7-flash
+```
+
+`--budget` 只在永久免费线路里选（中文优先 `glm-flash`，其余退到任一已配置免费线路）。
+各家的额度、限速、申请入口和“为什么没接”的清单见
+[`references/free-tier.md`](references/free-tier.md)。
 
 只看它会选谁、不真正调用（省钱）：
 
@@ -466,7 +478,7 @@ python scripts/privacy.py --restore --session <sid> --text "<PII_PHONE_1>"   # �
 ## 测试与 CI
 
 ```bash
-python -m unittest discover -s tests -v     # 73 项单测，全部标准库 unittest
+python -m unittest discover -s tests -v     # 82 项单测，全部标准库 unittest
 python -m compileall -q scripts tests       # 语法检查
 python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
 ```
@@ -509,16 +521,18 @@ ai-router/
 │   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总/投票 → 还原
 │   ├── usage.py          # 本地用量计量 + 响应缓存 + 健康度报表
 │   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 各类 .db）
-├── tests/                # 73 项标准库单测（无需任何依赖）
+├── tests/                # 82 项标准库单测（无需任何依赖）
 │   ├── test_privacy.py   # 脱敏↔还原、TTL、加密、流式还原
 │   ├── test_call_model.py# 错误分类、退避重试、跨模型降级、token 扩容
 │   ├── test_usage.py     # 计量聚合、缓存键、健康度、过期清理
 │   ├── test_judge.py     # 路由分类、健康度降权
 │   ├── test_ask.py       # 自动模式：路由决策、误判回归、CLI
-│   └── test_package.py   # 打包排除与密钥扫描
+│   ├── test_package.py   # 打包排除与密钥扫描
+│   └── test_registry.py  # 供应商表 / 路由 / 降级链的一致性校验
 ├── .github/workflows/
 │   └── ci.yml            # Python 3.9/3.12：编译 + 单测 + 打包校验 + 脱敏冒烟
 └── references/
+    ├── free-tier.md      # 免费额度领取清单（额度 / 限速 / 环境变量 / 不接入理由）
     ├── models.md         # 供应商端点、模型清单、能力标签、核实状态
     ├── onboarding.md     # 接下来接入哪些 AI（优先级与免费额度）
     └── github-setup.md   # 配置 GitHub 认证 / remote 并推送（含报错速查）

@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.3.0
+version: 1.4.0
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -66,6 +66,7 @@ the answer. stdout carries only the answer; routing and cost notes go to stderr.
 | `--json` | structured record: text + provider + model + usage + latency |
 | `--max-tokens` / `--timeout` / `--system` | same meaning as in `call_model.py` |
 | `--no-fallback` | do not degrade to another provider when the top one fails |
+| `--budget` | only consider permanent free-tier lines (GLM-4.7-Flash, SiliconFlow, Groq, OpenRouter, Mistral, NVIDIA) |
 
 **Operating rules for the agent**
 
@@ -166,6 +167,33 @@ default vision line is TokenHub `th-vision` (`hy-vision-2.0-instruct`) — it ne
 no extra key beyond `HUNYUAN_API_KEY`. If the routed provider cannot see images,
 the call fails rather than silently ignoring the attachment; check with
 `--dry-run` first.
+
+## Free Tier — 零成本线路
+
+Six providers currently offer a no-card free tier. They are wired in as real
+providers, so the same command works once the key is in `.env`:
+
+| Provider | 免费额度 | Env var | Default model |
+|---|---|---|---|
+| `glm-flash` | GLM-4.7-Flash 永久免费、无总量限制、200K | `ZHIPU_API_KEY` | `glm-4.7-flash` |
+| `siliconflow` | 新户约 2000 万 tokens；部分小模型免费 | `SILICONFLOW_API_KEY` | `Qwen/Qwen3-8B` |
+| `groq` | 30 RPM / 1000 次/天，速度最快 | `GROQ_API_KEY` | `openai/gpt-oss-120b` |
+| `openrouter` | 25+ 个 `:free` 模型，50 次/天 | `OPENROUTER_API_KEY` | `openrouter/free` |
+| `mistral` | Experiment 计划约 $10/月 | `MISTRAL_API_KEY` | `mistral-large-latest` |
+| `nvidia` | 全目录免费试原型，多数 40 RPM | `NVIDIA_API_KEY` | `openai/gpt-oss-120b` |
+
+```bash
+# only free lines — never spends money
+python scripts/ask.py --prompt "把这段会议通知压缩到 100 字" --budget
+python scripts/ask.py --prompt "..." --budget --dry-run   # see who would answer
+```
+
+`--budget` keeps the task-appropriate free line when one exists (Chinese →
+`glm-flash`), otherwise falls back to any configured free line. Never use free
+tiers for patient data or anything under NDA: Gemini's free tier and Mistral both
+train on inputs by default, and free endpoints do not guarantee which model
+answered. Full claim checklist, rate limits and the list of providers we
+deliberately skip: [`references/free-tier.md`](references/free-tier.md).
 
 ## Configuration
 
@@ -359,13 +387,14 @@ they are stored only in the local vault and excluded from git and from the zip.
 - `tests/` — 64 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, packaging)
 - `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.9/3.12
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
+- `references/free-tier.md` — 免费额度领取清单：额度、限速、环境变量、不接入的理由（GitHub Models 已下线等）
 - `references/onboarding.md` — which providers to add next, priority order, free-tier comparison
 - `.env.example` — API key template with sign-up URLs per provider
 
 ## Verify Before Shipping
 
 ```bash
-python -m unittest discover -s tests -v   # 73 tests, stdlib only
+python -m unittest discover -s tests -v   # 82 tests, stdlib only
 python -m compileall -q scripts tests
 python scripts/package.py --check-only    # structure + secret scan
 ```

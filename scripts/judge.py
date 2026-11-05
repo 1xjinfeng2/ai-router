@@ -18,12 +18,13 @@ import sys
 # Task type -> ordered candidate providers (best first).
 ROUTING = {
     "code":         ["claude", "th-code", "ark-deepseek", "deepseek", "openai"],
-    "chinese":      ["doubao", "hunyuan", "th-glm", "qwen", "glm"],
+    "chinese":      ["doubao", "hunyuan", "th-glm", "glm-flash", "qwen", "glm", "siliconflow"],
     "reasoning":    ["openai", "th-deepseek", "ark-deepseek", "deepseek", "gemini"],
-    "long-context": ["gemini", "th-kimi", "ark-kimi", "claude", "qwen"],
+    "long-context": ["gemini", "th-kimi", "ark-kimi", "claude", "qwen", "openrouter"],
     "vision":       ["th-vision", "gemini", "openai", "doubao"],
-    "structured":   ["openai", "qwen", "th-flash", "deepseek"],
-    "cheap":        ["doubao", "hunyuan", "th-flash", "ark-deepseek", "deepseek", "glm"],
+    "structured":   ["openai", "qwen", "th-flash", "siliconflow", "deepseek"],
+    "cheap":        ["doubao", "hunyuan", "th-flash", "glm-flash", "siliconflow", "groq",
+                     "openrouter", "mistral", "nvidia", "ark-deepseek", "deepseek", "glm"],
     "search":       [],  # needs a web tool, no built-in model
 }
 
@@ -76,6 +77,9 @@ KEYWORDS = {
         "weak": ["现在", "当前", "2026", "搜索", "current", "search"],
     },
 }
+
+# Providers whose calls are covered by a permanent free tier (no card).
+FREE_PROVIDERS = ["glm-flash", "siliconflow", "groq", "openrouter", "mistral", "nvidia"]
 
 # Deterministic tie-break when two task types score the same.
 TASK_PRIORITY = ["code", "structured", "vision", "search", "long-context",
@@ -194,6 +198,10 @@ def configured_providers():
         "th-flash": "HUNYUAN_API_KEY", "th-kimi": "HUNYUAN_API_KEY",
         "th-glm": "HUNYUAN_API_KEY", "th-minimax": "HUNYUAN_API_KEY",
         "th-vision": "HUNYUAN_API_KEY",
+        # Free-tier lines (see references/free-tier.md)
+        "glm-flash": "ZHIPU_API_KEY", "siliconflow": "SILICONFLOW_API_KEY",
+        "groq": "GROQ_API_KEY", "openrouter": "OPENROUTER_API_KEY",
+        "mistral": "MISTRAL_API_KEY", "nvidia": "NVIDIA_API_KEY",
     }
     configured = {p for p, e in env_map.items() if os.environ.get(e)}
     # Providers with no usable balance are excluded from automatic routing so a

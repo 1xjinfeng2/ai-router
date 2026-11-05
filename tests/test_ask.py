@@ -61,6 +61,21 @@ class RouteTests(unittest.TestCase):
         self.assertIn("forced", reason)
         self.assertEqual(ranked[0], "th-vision")
 
+    def test_budget_mode_keeps_only_free_lines(self):
+        free_set = {"glm-flash", "siliconflow", "groq"}
+        with mock.patch.object(judge, "configured_providers",
+                               return_value=set(CONFIGURED) | free_set):
+            task, reason, ranked = ask.route("帮我润色一段中文文案", budget=True)
+        self.assertEqual(task, "chinese")
+        self.assertIn("free tier only", reason)
+        self.assertTrue(set(ranked) <= free_set, ranked)
+        self.assertEqual(ranked[0], "glm-flash")
+
+    def test_budget_mode_without_free_lines_yields_nothing(self):
+        task, reason, ranked = ask.route("帮我润色一段中文文案", budget=True)
+        self.assertEqual(ranked, [])
+        self.assertIn("free tier only", reason)
+
     def test_ranking_is_deterministic(self):
         first = ask.route("帮我写一段小红书文案")[2]
         second = ask.route("帮我写一段小红书文案")[2]

@@ -57,6 +57,16 @@ PROVIDERS = {
     "th-minimax":  ("https://tokenhub.tencentmaas.com/v1", "HUNYUAN_API_KEY", "minimax-m3.1-flash", "openai"),
     # Vision alias: same TokenHub key, multimodal model (verified in /v1/models).
     "th-vision":   ("https://tokenhub.tencentmaas.com/v1", "HUNYUAN_API_KEY", "hy-vision-2.0-instruct", "openai"),
+    # ── Free-tier lines ─────────────────────────────────────────────────────
+    # No credit card required. Model IDs are the current (2026-11) free SKUs;
+    # re-check with `check_provider.py --provider X --scan` after adding a key,
+    # because providers rotate free models without notice.
+    "glm-flash":   ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY", "glm-4.7-flash", "openai"),
+    "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY", "Qwen/Qwen3-8B", "openai"),
+    "groq":        ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "openai/gpt-oss-120b", "openai"),
+    "openrouter":  ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openrouter/free", "openai"),
+    "mistral":     ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral-large-latest", "openai"),
+    "nvidia":      ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY", "openai/gpt-oss-120b", "openai"),
 }
 
 # Load .env from the skill root using the bundled stdlib-only loader.
@@ -498,6 +508,14 @@ FALLBACK_CHAINS = {
     "th-glm":       ["ark-glm", "th-flash"],
     "th-minimax":   ["th-flash", "doubao"],
     "th-vision":    ["gemini", "openai", "doubao"],
+    # Free lines fall back to the always-on domestic pair, never to each other
+    # (two free tiers failing back-to-back usually means a network/route issue).
+    "glm-flash":    ["th-flash", "doubao"],
+    "siliconflow":  ["th-flash", "doubao"],
+    "groq":         ["th-flash", "doubao"],
+    "openrouter":   ["th-flash", "doubao"],
+    "mistral":      ["th-flash", "doubao"],
+    "nvidia":       ["th-flash", "doubao"],
 }
 
 
