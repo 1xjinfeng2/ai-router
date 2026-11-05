@@ -79,6 +79,8 @@ STRICT_DETECTORS = [
 
 def _conn():
     c = sqlite3.connect(str(DB_PATH))
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA synchronous=NORMAL")
     c.execute(
         """CREATE TABLE IF NOT EXISTS vault (
                id INTEGER PRIMARY KEY AUTOINCREMENT,

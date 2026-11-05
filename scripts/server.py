@@ -87,6 +87,12 @@ class RateLimiter:
                 return False
             recent.append(now)
             self.hits[client] = recent
+            # Periodic GC: delete entries for IPs that went idle, so the dict
+            # does not grow without bound on a long-running server.
+            if len(self.hits) > 1000:
+                idle = [k for k, v in self.hits.items() if not v]
+                for k in idle:
+                    del self.hits[k]
             return True
 
 
@@ -111,12 +117,32 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        # Security headers: prevent MIME sniffing, clickjacking, and XSS
+        # in any browser-facing context (e.g. a SPA front-end).
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-XSS-Protection", "1; mode=block")
         self._cors()
         self.end_headers()
         self.wfile.write(body)
 
     def _client(self):
-        return self.client_address[0] if self.client_address else "?"
+        """Return the real client IP, respecting --trusted-proxy if set."""
+        direct = self.client_address[0] if self.client_address else "?"
+        trusted = self.server.trusted_proxy
+        if not trusted:
+            return direct
+        # Only trust X-Forwarded-For when the direct connection comes from a
+        # proxy we trust (e.g. nginx on the same host). This prevents a remote
+        # attacker from spoofing the header to bypass rate limits.
+        if direct != trusted and not (trusted == "127.0.0.1" and direct in ("127.0.0.1", "::1", "localhost")):
+            return direct
+        xff = self.headers.get("X-Forwarded-For", "")
+        if xff:
+            # Leftmost entry is the original client; see RFC 7239 §5.3.
+            return xff.split(",")[0].strip()
+        xri = self.headers.get("X-Real-IP", "")
+        return xri or direct
 
     def _auth_ok(self):
         token = self.server.token
@@ -322,6 +348,9 @@ def build_parser():
                    help="max requests per minute per client IP (0 disables)")
     p.add_argument("--cors", default=None, metavar="ORIGIN",
                    help="allow browser calls from ORIGIN (e.g. 'https://app.example.com')")
+    p.add_argument("--trusted-proxy", default=None, metavar="IP",
+                   help="trust X-Forwarded-For/X-Real-IP only from this proxy IP "
+                        "(e.g. '127.0.0.1' when behind nginx on the same host)")
     return p
 
 
@@ -337,6 +366,7 @@ def main(argv=None):
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     httpd.token = (args.token or "").strip()
     httpd.cors = args.cors
+    httpd.trusted_proxy = args.trusted_proxy
     httpd.limiter = RateLimiter(args.rate)
 
     shown = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host

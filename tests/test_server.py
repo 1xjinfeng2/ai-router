@@ -30,6 +30,7 @@ def start(token="t0ken", rate=30, cors=None):
     httpd = srv.ThreadingHTTPServer(("127.0.0.1", 0), Quiet)
     httpd.token = token
     httpd.cors = cors
+    httpd.trusted_proxy = None
     httpd.limiter = srv.RateLimiter(rate)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

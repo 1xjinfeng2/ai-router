@@ -66,6 +66,8 @@ PRICES = {
 
 def _conn():
     conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute(
         """CREATE TABLE IF NOT EXISTS calls(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,6 +114,12 @@ def estimate_cost(provider, model, prompt_tokens, completion_tokens):
     return (prompt_tokens / 1_000_000) * inn + (completion_tokens / 1_000_000) * out
 
 
+# Track consecutive record() failures so we can warn the operator instead of
+# silently losing data.  Reset on success.
+_record_fail_count = [0]
+_record_fail_warn = 5  # warn after this many consecutive failures
+
+
 def record(provider, model, prompt_tokens=0, completion_tokens=0,
            total_tokens=0, cache_hit=0, session_id=None,
            latency_ms=0, error=None, fallback_from=None):
@@ -134,20 +142,44 @@ def record(provider, model, prompt_tokens=0, completion_tokens=0,
         )
         conn.commit()
         conn.close()
+        _record_fail_count[0] = 0  # success — reset consecutive failure counter
     except Exception as e:  # noqa: BLE001
-        # Metering must never break the actual task.
-        sys.stderr.write(f"[usage] record failed (ignored): {e}\n")
+        # Metering must never break the actual task, but silent data loss
+        # should be visible to the operator so they can fix the root cause.
+        sys.stderr.write(f"[usage] record failed: {e}\n")
+        _record_fail_count[0] += 1
+        if _record_fail_count[0] >= _record_fail_warn:
+            sys.stderr.write(f"[usage] WARNING: {_record_fail_count[0]} consecutive "
+                             f"record failures — check disk space / permissions on {DB_PATH}\n")
+            _record_fail_count[0] = 0  # reset so the warning repeats later
 
 
-def cache_key(provider, model, system, prompt, max_tokens):
-    blob = json.dumps([provider, model, system, prompt, max_tokens],
-                      ensure_ascii=False, sort_keys=True)
+def cache_key(provider, model, system, prompt, max_tokens,
+              temperature=None, top_p=None, images=None):
+    """Hash all parameters that change the model's output.
+
+    Earlier versions only hashed provider/model/system/prompt/max_tokens, so
+    two calls with different temperatures (or with/without images) could hit the
+    same cache entry and return a wrong answer.  Now everything is included.
+    """
+    # images: hash each file path/data-url so the key stays short
+    img_digest = None
+    if images:
+        img_digest = hashlib.sha256(
+            "|".join(str(p) for p in images).encode("utf-8", errors="replace")
+        ).hexdigest()
+    blob = json.dumps(
+        [provider, model, system, prompt, max_tokens, temperature, top_p, img_digest],
+        ensure_ascii=False, sort_keys=True,
+    )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-def cache_get(provider, model, system, prompt, max_tokens):
+def cache_get(provider, model, system, prompt, max_tokens,
+              temperature=None, top_p=None, images=None):
     """Return (key, cached_text_or_None)."""
-    k = cache_key(provider, model, system, prompt, max_tokens)
+    k = cache_key(provider, model, system, prompt, max_tokens,
+                  temperature, top_p, images)
     try:
         conn = _conn()
         row = conn.execute("SELECT text FROM cache WHERE key=?", (k,)).fetchone()
@@ -157,8 +189,10 @@ def cache_get(provider, model, system, prompt, max_tokens):
         return k, None
 
 
-def cache_put(provider, model, system, prompt, max_tokens, text):
-    k = cache_key(provider, model, system, prompt, max_tokens)
+def cache_put(provider, model, system, prompt, max_tokens, text,
+              temperature=None, top_p=None, images=None):
+    k = cache_key(provider, model, system, prompt, max_tokens,
+                  temperature, top_p, images)
     ts = datetime.now(timezone.utc).isoformat()
     try:
         conn = _conn()
