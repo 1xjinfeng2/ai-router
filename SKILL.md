@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.5.0
+version: 1.6.0
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -136,7 +136,7 @@ python scripts/call_model.py --provider th-code \
 ```
 
 Parameters:
-- `--provider` (required): `doubao | deepseek | kimi | qwen | glm | hunyuan | gemini | openai | claude | ernie | ark-deepseek | ark-kimi | ark-glm | th-code | th-deepseek | th-flash | th-kimi | th-glm | th-minimax | th-vision`
+- `--provider` (required): `doubao | deepseek | kimi | qwen | glm | hunyuan | gemini | openai | claude | ernie | ark-deepseek | ark-kimi | ark-glm | th-code | th-deepseek | th-flash | th-kimi | th-glm | th-minimax | th-vision | custom`
 - `--model` (optional): overrides the provider default; any Ark or TokenHub model ID works with `--provider doubao` / `--provider hunyuan`
 - `--prompt` (required): the user message
 - `--system` (optional): a system prompt
@@ -181,6 +181,7 @@ providers, so the same command works once the key is in `.env`:
 | `openrouter` | 25+ 个 `:free` 模型，50 次/天 | `OPENROUTER_API_KEY` | `openrouter/free` |
 | `mistral` | Experiment 计划约 $10/月 | `MISTRAL_API_KEY` | `mistral-large-latest` |
 | `nvidia` | 全目录免费试原型，多数 40 RPM | `NVIDIA_API_KEY` | `openai/gpt-oss-120b` |
+| `custom` | 你自己的 vLLM / Ollama / 网关 | `AI_ROUTER_CUSTOM_API_KEY`（本地可空） | `AI_ROUTER_CUSTOM_MODEL` |
 
 ```bash
 # only free lines — never spends money
@@ -399,6 +400,39 @@ Rules it enforces:
 **Run it when** the user asks 有没有新版本 / 更新一下 / 自动更新 / "update
 yourself", or before work where a known upstream fix matters.
 
+## HTTP Service / 服务端部署
+
+`scripts/server.py` turns the skill into a small HTTP service, so other devices
+(phone, laptop, a company system) can borrow this machine's API keys instead of
+copying them around.
+
+```bash
+python scripts/server.py --host 127.0.0.1 --port 8787 --token "$TOKEN"
+curl -H "Authorization: Bearer $TOKEN" -d '{"prompt":"写条通知"}' localhost:8787/ask
+```
+
+- Routes: `GET /health` (open), `GET /providers`, `GET /usage?days=7`,
+  `POST /route` (decide only, free), `POST /ask` (route + call).
+- Refuses to bind a non-loopback address without a token; 1 MiB body cap,
+  20k-char prompt cap, 30 req/min per IP; prompts are never logged.
+- Client mode: set `AI_ROUTER_SERVER` + `AI_ROUTER_SERVER_TOKEN` and `ask.py`
+  forwards to that server instead of using local keys.
+- systemd / nginx / docker recipes and the security checklist:
+  `references/deploy.md`.
+- Known limit: `/ask` is synchronous and there is no SSE streaming yet.
+
+## Self-hosted Models / 自建模型服务
+
+`--provider custom` points at any OpenAI-compatible endpoint (vLLM, Ollama,
+LM Studio, one-api). Configure `AI_ROUTER_CUSTOM_BASE_URL`,
+`AI_ROUTER_CUSTOM_MODEL`, `AI_ROUTER_CUSTOM_API_KEY`; a local server needs no
+key (a placeholder Bearer is sent).
+
+`AI_ROUTER_CUSTOM_ROUTES` decides which task types it serves — default `cheap`,
+empty value disables it, `cheap,chinese` widens it. Keep it narrow: a GPU box
+that reboots mid-task should never ruin a real deliverable. It falls back to
+`th-flash → doubao`.
+
 ## Resources
 
 - `scripts/ask.py` — **one-command auto mode**: judge → pick best configured model → answer, with retry/fallback and metering
@@ -410,17 +444,19 @@ yourself", or before work where a known upstream fix matters.
 - `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize or vote → restore
 - `scripts/usage.py` — local usage metering + response cache + provider health report (`--report`, `--health`, `--expire`)
 - `scripts/update.py` — self-update from the git remote: version compare, dirty-tree guard, pull + test gate, auto rollback (`--check` / `--apply`)
-- `tests/` — 94 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, packaging)
+- `scripts/server.py` — HTTP service: `/ask`, `/route`, `/health`, `/providers`, `/usage`, bearer auth, rate limit
+- `tests/` — 114 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, HTTP server, custom endpoint, packaging)
 - `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.10/3.13 (runner pinned to ubuntu-24.04)
 - `references/models.md` — full provider list, endpoints, model catalogs, capability tags, Ark/TokenHub onboarding notes, verification status
 - `references/free-tier.md` — 免费额度领取清单：额度、限速、环境变量、不接入的理由（GitHub Models 已下线等）
+- `references/deploy.md` — 部署到服务器：端点/客户端/ systemd / nginx / docker / 安全清单 / 自建模型服务
 - `references/onboarding.md` — which providers to add next, priority order, free-tier comparison
 - `.env.example` — API key template with sign-up URLs per provider
 
 ## Verify Before Shipping
 
 ```bash
-python -m unittest discover -s tests -v   # 94 tests, stdlib only
+python -m unittest discover -s tests -v   # 114 tests, stdlib only
 python -m compileall -q scripts tests
 python scripts/package.py --check-only    # structure + secret scan
 ```

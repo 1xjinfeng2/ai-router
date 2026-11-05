@@ -81,6 +81,18 @@ KEYWORDS = {
 # Providers whose calls are covered by a permanent free tier (no card).
 FREE_PROVIDERS = ["glm-flash", "siliconflow", "groq", "openrouter", "mistral", "nvidia"]
 
+# A self-hosted endpoint (vLLM / Ollama / gateway) is opt-in per task type. By
+# default it only serves low-stakes "cheap" questions, so an OOM on the GPU box
+# can never ruin a real deliverable. Override with
+# AI_ROUTER_CUSTOM_ROUTES=cheap,structured (an empty value disables it).
+_custom_routes_env = os.environ.get("AI_ROUTER_CUSTOM_ROUTES")
+CUSTOM_ROUTES = [t.strip() for t in
+                 ("cheap" if _custom_routes_env is None else _custom_routes_env).split(",")
+                 if t.strip()]
+for _task in CUSTOM_ROUTES:
+    if _task in ROUTING and "custom" not in ROUTING[_task]:
+        ROUTING[_task].insert(0, "custom")
+
 # Deterministic tie-break when two task types score the same.
 TASK_PRIORITY = ["code", "structured", "vision", "search", "long-context",
                  "reasoning", "chinese", "cheap"]
@@ -206,6 +218,13 @@ def configured_providers():
     configured = {p for p, e in env_map.items() if os.environ.get(e)}
     # Providers with no usable balance are excluded from automatic routing so a
     # dead line never becomes the "best" pick or a wasted failover hop.
+    # `custom` is keyed by an endpoint, not an API key, so it is not in env_map.
+    try:
+        import call_model as _cm
+        if _cm.is_configured("custom"):
+            configured.add("custom")
+    except Exception:  # noqa: BLE001 - never let detection break routing
+        pass
     skip = {p.strip() for p in os.environ.get("AI_ROUTER_SKIP_PROVIDERS", "").split(",")
             if p.strip()}
     return configured - skip

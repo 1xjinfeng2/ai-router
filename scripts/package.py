@@ -38,7 +38,7 @@ KEY_PATTERNS = [
 
 REQUIRED = ["SKILL.md", "README.md", "LICENSE", "scripts/call_model.py",
             "scripts/ask.py", "scripts/relay.py", "scripts/judge.py",
-            "scripts/update.py"]
+            "scripts/update.py", "scripts/server.py"]
 
 
 def should_skip(path: Path) -> bool:

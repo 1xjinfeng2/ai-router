@@ -25,10 +25,15 @@ class ProviderTableTests(unittest.TestCase):
             with self.subTest(provider=name):
                 self.assertEqual(len(spec), 4)
                 base_url, key_env, model, mode = spec
-                self.assertTrue(base_url.startswith("https://"), base_url)
                 self.assertTrue(key_env.endswith("_API_KEY"), key_env)
-                self.assertTrue(model, "default model must not be empty")
                 self.assertIn(mode, MODES)
+                if name in cm.DYNAMIC_PROVIDERS:
+                    # Endpoint and model are supplied by the user at runtime, so
+                    # the static entry is allowed to be empty - but it must not
+                    # silently pretend to be a fixed provider.
+                    continue
+                self.assertTrue(base_url.startswith("https://"), base_url)
+                self.assertTrue(model, "default model must not be empty")
 
     def test_routing_candidates_all_exist(self):
         for task, ranked in judge.ROUTING.items():
@@ -54,9 +59,11 @@ class ProviderTableTests(unittest.TestCase):
 
         for name, (_url, key_env, _model, _mode) in cm.PROVIDERS.items():
             with self.subTest(provider=name):
-                with mock.patch.dict(os.environ,
-                                     {key_env: "test-key", "AI_ROUTER_SKIP_PROVIDERS": ""},
-                                     clear=False):
+                env = {key_env: "test-key", "AI_ROUTER_SKIP_PROVIDERS": ""}
+                if name in cm.DYNAMIC_PROVIDERS:
+                    # Recognised by having an endpoint, not by having a key.
+                    env["AI_ROUTER_CUSTOM_BASE_URL"] = "http://127.0.0.1:9/v1"
+                with mock.patch.dict(os.environ, env, clear=False):
                     self.assertIn(name, judge.configured_providers())
 
     def test_free_providers_are_real_and_keyed(self):

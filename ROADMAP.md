@@ -52,8 +52,12 @@
 10. ✅ 自我更新：`scripts/update.py --check/--apply`，版本比对（git / HTTPS 降级）、脏工作区拦截（退出码 3）、快进拉取、拉后跑全量测试、失败 `git reset --hard` 回滚（退出码 4）、`--zip` 顺便重打包
 11. ✅ 每周自动迭代：定时任务在无人值守下按「挑一个 ROADMAP 开放项 → 改代码 + 补测试 → 全绿才提交推送 → 写记录」循环，红则不留痕
 
+12. ✅ HTTP 服务：`scripts/server.py` 提供 `/ask` `/route` `/health` `/providers` `/usage`，bearer 鉴权（非回环无 token 拒绝启动）、按 IP 限流、体积上限、提示词不入日志；客户端设 `AI_ROUTER_SERVER` 即改为远端调用
+13. ✅ 自建模型服务：`--provider custom` 接 vLLM / Ollama / one-api 网关，端点与模型由环境变量给定，`AI_ROUTER_CUSTOM_ROUTES` 控制它接哪些任务（默认仅 `cheap`），失败降级 `th-flash → doubao`；部署手册见 `references/deploy.md`
+
 ### 仍开放（按价值排序）
 - [ ] 加密默认开启的引导流程（首次运行提示设置口令）
+- [ ] HTTP 服务的 SSE 流式与异步任务（当前 /ask 同步返回）
 - [ ] 投票支持加权融合（现在只选最优，不做加权拼接）
 - [ ] 流式接入汇总链路（当前 organizer 需完整文本）
 - [ ] Ollama 本地模型接入（评审未提及，待以上稳定后评估）

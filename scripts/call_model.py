@@ -67,7 +67,16 @@ PROVIDERS = {
     "openrouter":  ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openrouter/free", "openai"),
     "mistral":     ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral-large-latest", "openai"),
     "nvidia":      ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY", "openai/gpt-oss-120b", "openai"),
+    # Self-hosted / private gateway (vLLM, Ollama, LM Studio, one-api, FastChat).
+    # Base URL and model are not hardcoded: they come from the environment so the
+    # same skill works against any OpenAI-compatible endpoint you run. The tuple
+    # below is a placeholder filled in by refresh_custom() after .env loads.
+    "custom":      ("", "AI_ROUTER_CUSTOM_API_KEY", "", "openai"),
 }
+
+# ``custom`` is the only provider whose endpoint is user-supplied, so the static
+# table alone cannot describe it. Everything else is fixed.
+DYNAMIC_PROVIDERS = {"custom"}
 
 # Load .env from the skill root using the bundled stdlib-only loader.
 try:
@@ -76,6 +85,52 @@ except ImportError:  # running from an unusual cwd
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from env_loader import load_env_file
 load_env_file()
+
+
+def refresh_custom():
+    """Rebuild PROVIDERS['custom'] from the environment.
+
+    Called at import (so CLI use just works) and again from entry points, because
+    a caller may set the env vars after this module was imported — the server and
+    tests both do that.
+    """
+    base = (os.environ.get("AI_ROUTER_CUSTOM_BASE_URL") or "").strip().rstrip("/")
+    model = (os.environ.get("AI_ROUTER_CUSTOM_MODEL") or "").strip()
+    if base:
+        # Some endpoints are plain http (a LAN box, localhost); that is fine, the
+        # user chose the endpoint. Only require that it looks like a URL.
+        PROVIDERS["custom"] = (base, "AI_ROUTER_CUSTOM_API_KEY", model or "default", "openai")
+    else:
+        PROVIDERS["custom"] = ("", "AI_ROUTER_CUSTOM_API_KEY", model or "", "openai")
+    return PROVIDERS["custom"]
+
+
+refresh_custom()
+
+
+def is_configured(provider):
+    """True when this provider can actually be called right now."""
+    spec = PROVIDERS.get(provider)
+    if not spec:
+        return False
+    if provider in DYNAMIC_PROVIDERS:
+        # Endpoint may have been set after this module was imported (tests, the
+        # server and shell one-liners all do that), so re-read the environment.
+        spec = refresh_custom()
+        return bool(spec[0])
+    _base_url, key_env, _model, _mode = spec
+    return bool(os.environ.get(key_env))
+
+
+def api_key_for(provider):
+    """Key for a provider; local servers accept any string, so default to EMPTY."""
+    _base, key_env, _model, _mode = PROVIDERS[provider]
+    key = os.environ.get(key_env)
+    if key:
+        return key
+    if provider in DYNAMIC_PROVIDERS:
+        return os.environ.get("AI_ROUTER_CUSTOM_API_KEY") or "EMPTY"
+    return None
 
 
 IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -248,8 +303,11 @@ def stream_text(provider, prompt, system=None, temperature=None, max_tokens=2048
     because the caller has already started printing output."""
     if provider not in PROVIDERS:
         raise ValueError(f"unknown provider '{provider}'")
+    refresh_custom()
     base_url, key_env, default_model, mode = PROVIDERS[provider]
-    api_key = os.environ.get(key_env)
+    if not base_url:
+        raise RuntimeError("custom endpoint not set: fill AI_ROUTER_CUSTOM_BASE_URL")
+    api_key = api_key_for(provider)
     if not api_key:
         raise RuntimeError(f"missing key {key_env}")
     model = model or default_model
@@ -345,8 +403,11 @@ def call_once(provider, prompt, system=None, temperature=None, max_tokens=2048,
     """One raw API call. Raises the original exception on failure."""
     if provider not in PROVIDERS:
         raise ValueError(f"unknown provider '{provider}'")
+    refresh_custom()
     base_url, key_env, default_model, mode = PROVIDERS[provider]
-    api_key = os.environ.get(key_env)
+    if not base_url:
+        raise RuntimeError("custom endpoint not set: fill AI_ROUTER_CUSTOM_BASE_URL")
+    api_key = api_key_for(provider)
     if not api_key:
         raise RuntimeError(f"missing key {key_env}")
     model = model or default_model
@@ -425,9 +486,9 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
     for idx, prov in enumerate(chain):
         if prov not in PROVIDERS:
             continue
-        env = PROVIDERS[prov][1]
-        if not os.environ.get(env):
-            log(f"skip fallback '{prov}': missing {env}")
+        if not is_configured(prov):
+            log(f"skip fallback '{prov}': not configured "
+                f"({PROVIDERS[prov][1] or 'endpoint missing'})")
             continue
         if idx > 0 and prov in skip:
             log(f"skip fallback '{prov}': marked unavailable in AI_ROUTER_SKIP_PROVIDERS")
@@ -516,6 +577,9 @@ FALLBACK_CHAINS = {
     "openrouter":   ["th-flash", "doubao"],
     "mistral":      ["th-flash", "doubao"],
     "nvidia":       ["th-flash", "doubao"],
+    # A self-hosted box is the most likely thing to be down or OOM-killed, so it
+    # always has somewhere to go.
+    "custom":       ["th-flash", "doubao"],
 }
 
 
@@ -542,8 +606,14 @@ def main():
                    help="attach a local image (repeatable); needs a vision model")
     args = p.parse_args()
 
+    refresh_custom()
     base_url, key_env, default_model, mode = PROVIDERS[args.provider]
-    api_key = os.environ.get(key_env)
+    if args.provider in DYNAMIC_PROVIDERS and not base_url:
+        sys.stderr.write(
+            "[ai-router] ERROR: 'custom' needs AI_ROUTER_CUSTOM_BASE_URL, e.g. "
+            "http://127.0.0.1:11434/v1 for Ollama or http://gpu-box:8000/v1 for vLLM\n")
+        sys.exit(2)
+    api_key = api_key_for(args.provider)
     if not api_key:
         sys.stderr.write(
             f"[ai-router] ERROR: missing API key for provider '{args.provider}'. "

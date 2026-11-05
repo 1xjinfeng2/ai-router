@@ -18,8 +18,10 @@
 - 🖼️ **图片理解**：`--image` 直接附本地图片（png/jpg/webp/gif/bmp），自动走视觉模型，无需单独上传接口
 - 🛡️ **失败重试 + 跨模型降级**：限流/5xx 指数退避重试，401/402 立即切备用模型，推理模型空正文自动扩容重试
 - 🌊 **流式输出**：`--stream` 边生成边打印，隐私占位符跨 chunk 也能正确还原
+- 🌐 **可部署成 HTTP 服务**：手机、别的电脑、公司系统都能借用服务器上的 Key，带 token 鉴权与限流
+- 🖥️ **可接自建模型**：服务器上的 vLLM / Ollama / one-api 网关作为 `custom` 供应商，走自己的 GPU
 - 🔄 **自动更新**：`update.py --check/--apply` 升级到新版，拉取后自动跑测试，失败即回滚到原提交，绝不把技能搞坏
-- 🧪 **94 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、自我更新回滚、打包密钥扫描全覆盖
+- 🧪 **114 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、自我更新回滚、打包密钥扫描全覆盖
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -37,6 +39,7 @@
 | OpenAI | gpt-5.1 | 综合、推理 |
 | Claude | claude-sonnet-5-5 | 编程、长文 |
 | 文心一言（可选） | ernie-4.0-8k | 中文（未核实） |
+| 自建（vLLM / Ollama / 网关） | 由 `AI_ROUTER_CUSTOM_MODEL` 决定 | 私有部署，数据不出内网 |
 
 > 2026-11-05 已按各家官方文档全量更新默认模型 ID（旧值 `gpt-4o` /
 > `claude-3-5-sonnet` / `gemini-2.0-flash` / `glm-4-plus` / `moonshot-v1-8k` /
@@ -502,10 +505,68 @@ python scripts/update.py --apply --zip D:/dist   # 顺便重打包分发包
 
 没有 git（比如别人直接解压了 zip）时，它会退化成读 GitHub 上的 `SKILL.md` 比对版本号，只报"有没有新版"，不下载任何东西 —— 这种情况按提示手动换 zip 即可。
 
+## 部署成 HTTP 服务
+
+把技能放到一台常开的机器上，其他设备就不用各自配 Key、各自记账了。
+
+```bash
+# 服务器上
+export AI_ROUTER_SERVER_TOKEN=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
+python scripts/server.py --host 127.0.0.1 --port 8787
+```
+
+```bash
+# 任何能发 HTTP 的客户端
+curl -s -X POST http://your-server:8787/ask \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"prompt":"帮我写条签到提醒"}' \
+  | python -c "import json,sys;print(json.load(sys.stdin)['text'])"
+```
+
+| 端点 | 用途 | 要 token |
+|---|---|---|
+| `GET /health` | 存活、版本、已配置供应商数 | 否 |
+| `GET /providers` | 供应商清单与可用状态 | 是 |
+| `GET /usage?days=7` | 调用次数与费用汇总 | 是 |
+| `POST /route` | 只给路由结论，不调用（免费） | 是 |
+| `POST /ask` | 路由 + 调用 + 返回答案 | 是 |
+
+**只让本机借用服务器**（本机不存任何厂商 Key）：
+
+```
+AI_ROUTER_SERVER=http://your-server:8787
+AI_ROUTER_SERVER_TOKEN=xxxxxxxx
+```
+
+写进 `.env` 后，`ask.py` 会把请求转给服务器，本地路由只用来显示"会派给谁"。
+
+安全默认值：非回环地址没有 token 直接拒绝启动；请求体上限 1 MiB、提示词上限 2 万字符、默认每 IP 30 次/分钟；**提示词不写日志**，只记方法、路径、状态、耗时、IP。
+
+完整部署（systemd、nginx TLS、docker、SSH 隧道、安全清单）见 [`references/deploy.md`](references/deploy.md)。
+
+## 接入自建模型服务
+
+服务器上已经有 GPU、跑着 vLLM 或 Ollama 时，把它当成 `custom` 供应商接入，数据不出内网、也不产生 API 费用：
+
+```bash
+# .env
+AI_ROUTER_CUSTOM_BASE_URL=http://127.0.0.1:8000/v1   # vLLM；Ollama 是 :11434/v1
+AI_ROUTER_CUSTOM_MODEL=Qwen/Qwen3-32B
+AI_ROUTER_CUSTOM_API_KEY=                            # 本地服务通常不需要
+AI_ROUTER_CUSTOM_ROUTES=cheap                        # 默认只接低风险任务
+```
+
+```bash
+python scripts/call_model.py --provider custom --prompt "你好" --max-tokens 64
+python scripts/ask.py --prompt "嗯" --dry-run        # 应看到 provider=custom
+```
+
+`AI_ROUTER_CUSTOM_ROUTES` 控制它接哪些任务：默认 `cheap`（闲聊、简单确认），`cheap,chinese` 会连中文文案一起接，留空则只在显式 `--provider custom` 时使用。**建议保持窄**：GPU 机器重启或显存被打爆时，不该影响正事。真挂了会自动降级到 `th-flash → doubao`。
+
 ## 测试与 CI
 
 ```bash
-python -m unittest discover -s tests -v     # 94 项单测，全部标准库 unittest
+python -m unittest discover -s tests -v     # 114 项单测，全部标准库 unittest
 python -m compileall -q scripts tests       # 语法检查
 python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
 ```
@@ -550,8 +611,9 @@ ai-router/
 │   ├── relay.py          # 隐私中转编排：脱敏 → 并发 → 汇总/投票 → 还原
 │   ├── usage.py          # 本地用量计量 + 响应缓存 + 健康度报表
 │   ├── update.py         # 自我更新：版本比对、脏工作区保护、拉取后测试、失败回滚
+│   ├── server.py         # HTTP 服务：/ask /route /health /providers /usage + 鉴权限流
 │   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 各类 .db）
-├── tests/                # 94 项标准库单测（无需任何依赖）
+├── tests/                # 114 项标准库单测（无需任何依赖）
 │   ├── test_privacy.py   # 脱敏↔还原、TTL、加密、流式还原
 │   ├── test_call_model.py# 错误分类、退避重试、跨模型降级、token 扩容
 │   ├── test_usage.py     # 计量聚合、缓存键、健康度、过期清理
@@ -559,10 +621,13 @@ ai-router/
 │   ├── test_ask.py       # 自动模式：路由决策、误判回归、CLI
 │   ├── test_package.py   # 打包排除与密钥扫描
 │   ├── test_registry.py  # 供应商表 / 路由 / 降级链的一致性校验
-│   └── test_update.py    # 版本比对、脏工作区拦截、快进拉取、测试失败回滚
+│   ├── test_update.py    # 版本比对、脏工作区拦截、快进拉取、测试失败回滚
+│   ├── test_server.py    # HTTP 服务：鉴权、限流、路由、错误码映射
+│   └── test_custom.py    # 自建端点：环境解析、路由接入、请求构造
 ├── .github/workflows/
 │   └── ci.yml            # Python 3.10/3.13：编译 + 单测 + 打包校验 + 脱敏冒烟
 └── references/
+    ├── deploy.md         # 部署到服务器：端点、客户端、systemd、nginx、docker、安全清单
     ├── free-tier.md      # 免费额度领取清单（额度 / 限速 / 环境变量 / 不接入理由）
     ├── models.md         # 供应商端点、模型清单、能力标签、核实状态
     ├── onboarding.md     # 接下来接入哪些 AI（优先级与免费额度）
