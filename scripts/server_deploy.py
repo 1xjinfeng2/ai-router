@@ -115,8 +115,42 @@ def restore(backup):
         else:
             shutil.copy2(src, dst)
     run(["chown", "-R", "airouter:airouter", str(APP / "scripts"), str(APP / "tests")])
+    # The EnvironmentFile is deliberately not in the backup, so realign the
+    # expected version with the restored release to avoid a false drift alarm.
+    old_version = read_version(backup / "SKILL.md")
+    if old_version:
+        sync_expect_version(old_version)
     run(["systemctl", "restart", UNIT])
     time.sleep(2)
+
+
+def sync_expect_version(version):
+    """Keep AI_ROUTER_EXPECT_VERSION in the EnvironmentFile in step.
+
+    Without this, a static expected version would make /health report drift
+    after every legitimate upgrade, and the smoke test would roll back a good
+    release. Only the version line is touched; keys and token stay untouched.
+    """
+    env = APP / ".env"
+    if not env.exists() or not version:
+        return
+    try:
+        lines = env.read_text(encoding="utf-8").splitlines()
+        out, found = [], False
+        for line in lines:
+            if line.strip().startswith("AI_ROUTER_EXPECT_VERSION="):
+                out.append(f"AI_ROUTER_EXPECT_VERSION={version}")
+                found = True
+            else:
+                out.append(line)
+        if not found:
+            out.append(f"AI_ROUTER_EXPECT_VERSION={version}")
+        env.write_text("\n".join(out) + "\n", encoding="utf-8")
+        run(["chown", "airouter:airouter", str(env)])
+        os.chmod(env, 0o600)
+        log(f"synced AI_ROUTER_EXPECT_VERSION={version}")
+    except OSError as e:
+        log(f"could not sync expected version (non-fatal): {e}")
 
 
 def unpack(zip_path):
@@ -170,6 +204,7 @@ def main(argv=None):
         unpack(zip_path)
         version = read_version(APP / "SKILL.md")
         log(f"unpacked new release, version={version}")
+        sync_expect_version(version)
         run(["chown", "-R", "airouter:airouter", str(APP / "scripts"), str(APP / "tests")])
         code, _, err = run(["systemctl", "restart", UNIT])
         if code != 0:

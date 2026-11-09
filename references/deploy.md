@@ -202,6 +202,37 @@ echo $?   # 0 健康 · 1 漂移 · 2 不可达
 把同一套校验接到自更新流程：拉代码→测试→冒烟，任一失败都 `git reset --hard`
 回滚到更新前的提交（冒烟失败为退出码 5）。
 
+## 7.2 生产加固记录（2026-11-09）
+
+排查公网访问日志后确认：7 天内 1000+ 次请求**全部是扫描器**
+（`/.env`、`/.git/config`、`wp-config.php.bak` 等，1022 次 401），
+没有任何真实公网客户端。因此把服务从 `0.0.0.0:80` 收敛为 **`127.0.0.1:80`**，
+需要远程使用时走 SSH 隧道：
+
+```bash
+ssh -i ~/.ssh/id_ed25519 -N -L 18080:127.0.0.1:80 root@43.136.114.234
+# 之后本机访问 http://127.0.0.1:18080/health
+```
+
+同时把密钥从普通 `.env` 升格为 systemd `EnvironmentFile`（mode 0600，
+`airouter:airouter`），并轮换 bearer token。
+
+另一个实测踩坑：`usage.db` 虽属 `airouter`，但 `/opt/ai-router` 目录是
+`root:root 0755`；SQLite **WAL 需要在同目录创建 `-wal` / `-shm`**，
+目录不可写就会报 `attempt to write a readonly database`。修法是建独立数据目录：
+
+```
+/opt/ai-router/data/           airouter:airouter 0750
+  usage.db / privacy_vault.db / free_tier_cache.json   0600
+```
+
+并在 `EnvironmentFile` 中设 `AI_ROUTER_USAGE_DB` / `AI_ROUTER_VAULT_DB` /
+`AI_ROUTER_FREE_CACHE` 指向它们，`ReadWritePaths` 加上 `data/`。
+
+`server_deploy.py` 在每次发布（含回滚）时自动同步
+`AI_ROUTER_EXPECT_VERSION`，否则静态期望值会让 `/health` 在新版本上线后
+误报漂移、把一次正常发布误判为失败并回滚。
+
 ## 8. 已知限制
 
 - `/ask` 是**同步**的：长文（几千字）可能跑 1-2 分钟，客户端和反代超时都要放宽。

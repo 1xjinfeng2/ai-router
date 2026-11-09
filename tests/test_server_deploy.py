@@ -24,6 +24,37 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(dep.read_version(Path("/nonexistent/SKILL.md")), "")
 
 
+class ExpectVersionSyncTests(unittest.TestCase):
+    def test_updates_existing_expected_version(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            env.write_text("AI_ROUTER_SERVER_TOKEN=secret\n"
+                           "AI_ROUTER_EXPECT_VERSION=1.6.5\n"
+                           "AI_ROUTER_EXPECT_PROVIDERS=16\n", encoding="utf-8")
+            with mock.patch.object(dep, "APP", Path(d)), \
+                    mock.patch.object(dep, "run", return_value=(0, "", "")):
+                dep.sync_expect_version("1.6.7")
+            text = env.read_text(encoding="utf-8")
+            self.assertIn("AI_ROUTER_EXPECT_VERSION=1.6.7", text)
+            self.assertIn("AI_ROUTER_SERVER_TOKEN=secret", text)
+            self.assertIn("AI_ROUTER_EXPECT_PROVIDERS=16", text)
+
+    def test_appends_when_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            env.write_text("AI_ROUTER_SERVER_TOKEN=secret\n", encoding="utf-8")
+            with mock.patch.object(dep, "APP", Path(d)), \
+                    mock.patch.object(dep, "run", return_value=(0, "", "")):
+                dep.sync_expect_version("1.6.7")
+            self.assertIn("AI_ROUTER_EXPECT_VERSION=1.6.7",
+                          env.read_text(encoding="utf-8"))
+
+    def test_missing_env_is_noop(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(dep, "APP", Path(d)):
+                dep.sync_expect_version("1.6.7")
+
+
 class SmokeTests(unittest.TestCase):
     def test_matching_health_is_ok(self):
         health = {"ok": True, "version": "1.6.3", "providers_configured": 16,
