@@ -237,5 +237,24 @@ class ImageInputTests(unittest.TestCase):
         self.assertEqual(parts[1]["source"]["data"], "UklGRg==")
 
 
+class FreeTierDefaultTests(unittest.TestCase):
+    """Guard against a silently reverted / dead default model ID."""
+
+    def test_openrouter_default_is_a_real_free_model(self):
+        # 'openrouter/free' used to be the default, but OpenRouter retired that
+        # alias (402 insufficient credits) and delisted the classic :free slugs.
+        # A free-tier provider must default to a concrete, callable :free model.
+        model = cm.PROVIDERS["openrouter"][2]
+        self.assertNotEqual(model, "openrouter/free")
+        self.assertTrue(model.endswith(":free"), model)
+
+    def test_free_tier_defaults_are_not_paid_aliases(self):
+        for provider in ("glm-flash", "siliconflow", "groq", "openrouter",
+                         "mistral", "nvidia"):
+            model = cm.PROVIDERS[provider][2]
+            self.assertTrue(model, provider)
+            self.assertNotIn("paid", model.lower(), provider)
+
+
 if __name__ == "__main__":
     unittest.main()

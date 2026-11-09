@@ -64,7 +64,7 @@ PROVIDERS = {
     "glm-flash":   ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY", "glm-4.7-flash", "openai"),
     "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY", "Qwen/Qwen3-8B", "openai"),
     "groq":        ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "openai/gpt-oss-120b", "openai"),
-    "openrouter":  ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openrouter/free", "openai"),
+    "openrouter":  ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "recursive/flint-v1.0:free", "openai"),
     "mistral":     ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral-large-latest", "openai"),
     "nvidia":      ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY", "openai/gpt-oss-120b", "openai"),
     # Self-hosted / private gateway (vLLM, Ollama, LM Studio, one-api, FastChat).
