@@ -16,6 +16,7 @@ import argparse
 import base64
 import json
 import os
+import random
 import socket
 import sys
 import time
@@ -246,9 +247,19 @@ def call_anthropic(base_url, api_key, model, prompt, system, temperature, max_to
 
 
 def extract_text(resp, mode):
+    """Visible answer text only. Hidden thinking never counts as an answer."""
     if mode == "anthropic":
         return "".join(p.get("text", "") for p in resp.get("content", []) if p.get("type") == "text")
     return resp["choices"][0]["message"]["content"]
+
+
+def has_reasoning_only(resp, mode):
+    """True when the model spent its budget on hidden thinking, body is empty."""
+    try:
+        import free_lines
+        return bool(free_lines.extract_reasoning(resp, mode))
+    except ImportError:  # pragma: no cover - free_lines ships with the skill
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -433,12 +444,27 @@ def call_once(provider, prompt, system=None, temperature=None, max_tokens=2048,
     api_key = api_key_for(provider)
     if not api_key:
         raise RuntimeError(f"missing key {key_env}")
+    if model is None and provider == "openrouter":
+        # Free SKUs are delisted without notice. Discover at runtime (cached for
+        # 24h, with a last-good snapshot and a static seed as fallbacks) instead
+        # of trusting a hardcoded ID that will silently rot.
+        try:
+            import free_lines
+            model, _source = free_lines.resolve_openrouter_model(api_key)
+        except Exception:  # noqa: BLE001 - discovery must never break a call
+            model = default_model
     model = model or default_model
     if mode == "anthropic":
-        return call_anthropic(base_url, api_key, model, prompt, system,
+        resp = call_anthropic(base_url, api_key, model, prompt, system,
                               temperature, max_tokens, top_p, timeout, images)
-    return call_openai(base_url, api_key, model, prompt, system,
-                       temperature, max_tokens, top_p, timeout, images)
+    else:
+        resp = call_openai(base_url, api_key, model, prompt, system,
+                           temperature, max_tokens, top_p, timeout, images)
+    # Let the caller report/record the model that was actually used, which may
+    # differ from the static default when discovery picked a fresh free SKU.
+    if isinstance(resp, dict):
+        resp["_ai_router_model"] = model
+    return resp
 
 
 def call_with_retry(provider, prompt, system=None, temperature=None,
@@ -453,21 +479,40 @@ def call_with_retry(provider, prompt, system=None, temperature=None,
     errs = []
     last = None
     extra = {"images": images} if images else {}
+    try:
+        import free_lines
+    except ImportError:  # pragma: no cover - ships with the skill
+        free_lines = None
     for i in range(attempts):
         try:
             resp = call_once(provider, prompt, system, temperature, max_tokens,
                              top_p, timeout, model, **extra)
-            return resp, (model or PROVIDERS[provider][2]), i + 1, errs
+            used_model = model or (resp.get("_ai_router_model") if isinstance(resp, dict) else None) \
+                or PROVIDERS[provider][2]
+            return resp, used_model, i + 1, errs
         except Exception as e:  # noqa: BLE001
             status, retryable, detail = classify_error(e)
             errs.append((status, detail))
             last = e
+            # Vendor/account rate limits are not transient in the usual sense:
+            # retrying inside the same window just wastes a concurrency slot.
+            # Mark the line as cooling and fail fast so call_text() can switch
+            # to a different vendor via FALLBACK_CHAINS.
+            if free_lines and free_lines.is_soft_limit(status, detail):
+                secs = free_lines.penalize(provider, status, detail)
+                if log:
+                    log(f"{provider}: soft rate limit -> cooldown {secs}s, "
+                        f"skipping retry and switching line")
+                raise
             if not retryable or i == attempts - 1:
                 raise
             delay = min(RETRY_BASE_DELAY * (2 ** i), RETRY_MAX_DELAY)
+            # Jitter so concurrent callers do not retry in lockstep.
+            if free_lines:
+                delay *= (1 + random.uniform(-free_lines.JITTER, free_lines.JITTER))
             if log:
                 log(f"{provider}: {detail} -> retry {i + 1}/{attempts - 1} in {delay:.1f}s")
-            time.sleep(delay)
+            time.sleep(max(0.1, delay))
     raise last  # pragma: no cover
 
 
@@ -499,8 +544,17 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
     """
     log = log or (lambda m: None)
     chain = [provider]
+    try:
+        import free_lines
+    except ImportError:  # pragma: no cover
+        free_lines = None
     if allow_fallback:
-        chain += [p for p in FALLBACK_CHAINS.get(provider, []) if p not in chain]
+        backups = [p for p in FALLBACK_CHAINS.get(provider, []) if p not in chain]
+        # A line that is currently rate-limited is a poor backup; try the
+        # others first, but keep it at the end in case everything else fails.
+        if free_lines:
+            backups = free_lines.demote(backups)
+        chain += backups
     attempted = []
     budget = effective_max_tokens(provider, max_tokens)
     last_err, last_status = "no provider answered", None
@@ -532,11 +586,15 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
         text = (extract_text(resp, PROVIDERS[prov][3]) or "").strip()
         u = extract_usage(resp, PROVIDERS[prov][3])
         empty_retry = False
+        reasoning_only = False
         if not text and prov_budget < EMPTY_BODY_RETRY_CAP:
             # Reasoning model spent everything on hidden thinking: try once more
             # with a doubled budget (bounded), then give up on this provider.
+            reasoning_only = has_reasoning_only(resp, PROVIDERS[prov][3])
             bigger = min(prov_budget * 2, EMPTY_BODY_RETRY_CAP)
-            log(f"{prov}: empty body at {prov_budget} tokens -> retry once at {bigger}")
+            log(f"{prov}: empty body at {prov_budget} tokens"
+                f"{' (reasoning_content only)' if reasoning_only else ''} "
+                f"-> retry once at {bigger}")
             empty_retry = True
             try:
                 resp2, used_model, tries2, _ = call_with_retry(
@@ -549,8 +607,14 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
                 status, _r, detail = classify_error(e)
                 log(f"{prov}: empty-body retry failed: {detail}")
         if not text:
-            last_err, last_status = "empty body (model produced no visible text)", None
-            log(f"{prov}: empty body even after retry; trying fallback")
+            # Never count an empty body as success: hidden thinking is not an
+            # answer. Writing a non-None error is what lets usage.health() and
+            # judge.health_adjusted() actually demote this line.
+            last_err = ("empty body (reasoning_content only, budget exhausted)"
+                        if reasoning_only else
+                        "empty body (model produced no visible text)")
+            last_status = None
+            log(f"{prov}: {last_err}; trying fallback")
             continue
         if idx > 0:
             log(f"answered by fallback '{prov}' (primary '{provider}' failed)")

@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.6.4
+version: 1.6.5
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -484,6 +484,7 @@ that reboots mid-task should never ruin a real deliverable. It falls back to
 - `scripts/update.py` — self-update from the git remote: version compare, dirty-tree guard, pull + test gate, deploy smoke test, auto rollback (`--check` / `--apply` / `--smoke-url`)
 - `scripts/health_check.py` — deployment drift detection (config hash + expectations), shared by server, update.py and deploy scripts
 - `scripts/server_deploy.py` — on-server release: snapshot → unpack → restart → smoke → auto rollback
+- `scripts/free_lines.py` — free-tier governance: soft-limit cooldown (429 / 1302 / 1305), OpenRouter `:free` runtime discovery with last-good cache, reasoning-only detection. `python scripts/free_lines.py --discover` refreshes the free-model snapshot
 - `scripts/server.py` — HTTP service: `/ask`, `/route`, `/health`, `/providers`, `/usage`, bearer auth, rate limit
 - `tests/` — 138 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, HTTP server, custom endpoint, packaging)
 - `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.10/3.13 (runner pinned to ubuntu-24.04)

@@ -79,21 +79,46 @@ def route(prompt, use_llm=False, judge_provider=None, task_override=None, budget
         ranked = free
         reason += "; free tier only"
     ranked = judge.health_adjusted(ranked)
+    # Live cooldown (recent 429/1302/1305) is more current than the usage.db
+    # rolling window, so apply it last. Cooling lines stay in the list as a
+    # last resort rather than being removed outright.
+    try:
+        import free_lines
+        before = list(ranked)
+        ranked = free_lines.demote(ranked)
+        if ranked != before:
+            cooling = [p for p in ranked if free_lines.is_cooling(p)]
+            reason += f"; demoted cooling lines ({', '.join(cooling)})"
+    except ImportError:  # pragma: no cover
+        pass
     return task, reason, ranked
 
 
 def _record(provider, model, used, latency_ms):
-    """Best-effort metering so `usage.py --report` stays complete."""
+    """Best-effort metering so `usage.py --report` stays complete.
+
+    Crucially, failures (including empty bodies and rate limits) must be
+    recorded WITH an error. Otherwise `usage.health()` counts them as successes
+    and `judge.health_adjusted()` can never demote a bad line.
+    """
     try:
         import usage
         u = used.get("usage") or {}
+        err = used.get("error")
         usage.record(
-            provider, model,
+            used.get("provider") or provider,
+            used.get("model") or model,
             u.get("prompt_tokens", 0), u.get("completion_tokens", 0),
             u.get("total_tokens", 0),
             latency_ms=latency_ms,
+            error=str(err)[:300] if err else None,
             fallback_from=used.get("fallback_from"),
         )
+        # When a backup answered, the primary still failed: record that failure
+        # too, so its own success rate reflects reality.
+        if not err and used.get("fallback_from"):
+            usage.record(provider, model, latency_ms=latency_ms,
+                         error="primary failed; answered by fallback")
     except Exception:  # noqa: BLE001
         pass
 

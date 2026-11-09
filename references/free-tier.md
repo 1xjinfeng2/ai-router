@@ -29,7 +29,7 @@
 | 平台 | 免费额度 | 环境变量 | 默认模型 | 注意 |
 |---|---|---|---|---|
 | Groq | 30 RPM / 1000 次/天 / 8K TPM（每模型），速度极快 | `GROQ_API_KEY` | `openai/gpt-oss-120b` | 上下文短，长文会撞 TPM 上限 |
-| OpenRouter | 25+ 个 `:free` 模型，20 RPM / 50 次/天（充过 $10 提到 1000 次） | `OPENROUTER_API_KEY` | `openrouter/free`（自动选免费模型） | 免费模型的提示词可能被记录 |
+| OpenRouter | 12+ 个 `:free` 模型，20 RPM / 50 次/天（充过 $10 提到 1000 次） | `OPENROUTER_API_KEY` | 运行时动态发现（见下） | `openrouter/free` 别名已失效要 credits；免费模型频繁上下架，提示词可能被记录 |
 | Google Gemini | Flash 全系免费层，免绑卡，1M 上下文，原生多模态 | `GEMINI_API_KEY` | `gemini-2.5-flash` | **国内需代理**；免费层数据用于改进产品 |
 | Mistral | Experiment 计划约 $10/月额度 | `MISTRAL_API_KEY` | `mistral-large-latest` | 默认会用你的数据训练，需手动关闭 |
 | NVIDIA NIM | 全目录模型免费试原型，多数 40 RPM | `NVIDIA_API_KEY` | `openai/gpt-oss-120b` | 仅限开发验证用途 |
@@ -64,6 +64,28 @@ python scripts/ask.py --prompt "帮我润色一段文案" --budget --dry-run
 
 `--budget` 会把候选限制在永久免费线路内：任务能用免费模型就用（中文 → `glm-flash`），
 用不上就退到任一已配置的免费线路。适合批量、试跑、跑不要紧的活。
+
+## 五之二、免费线路的自愈（2026-11-09 起自动）
+
+代码不再把某个 `:free` 模型 ID 写死当默认：`call_model.py` 调用 OpenRouter 时会
+`GET /api/v1/models`，筛出 `id` 以 `:free` 结尾且 `pricing.prompt == 0` 的模型，
+把结果缓存到 `free_tier_cache.json`（24h）。拉取失败时用 **last-good 快照**，
+再失败才用静态种子列表。硬编码 ID 只作兜底种子——避免免费 SKU 悄悄下架后整条线路静默失效。
+
+```bash
+python scripts/free_lines.py --discover          # 手动刷新免费模型快照
+python scripts/free_lines.py --reset-cooldown    # 清空限流冷却状态
+AI_ROUTER_FREE_CACHE=/path/cache.json           # 自定义缓存位置
+```
+
+限流（`429` / 智谱 `1302` `1305`）不再盲目指数退避：命中即给该线路打一个 60–300s
+的冷却窗口（带抖动），`call_with_retry` 立即让出、`call_text` 换厂商降级，
+`ask.route()` 把冷却中的线路排到候选末尾。普通瞬时错误仍走重试，但加了抖动避免齐步重试。
+
+另外**空正文不再算成功**：推理模型只吐 `reasoning_content` 时，先有限提额重试一次，
+仍空就记 `error` 并降级。`ask._record()` 现在会把失败写入 `usage.db`，
+`usage.health()` / `judge.health_adjusted()` 因此能真正按成功率给坏线路降权
+（此前失败被记成成功，健康度一直是失真的）。
 
 ## 六、免费额度使用建议
 

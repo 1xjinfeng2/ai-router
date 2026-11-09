@@ -8,6 +8,8 @@ usage.db
 *.db
 # One-shot "encryption hint already shown" marker written beside the vault
 *.enc-hint
+# Runtime cache: OpenRouter free-model discovery + soft-failure cooldown state
+free_tier_cache.json
 
 # Python cache
 __pycache__/
