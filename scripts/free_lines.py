@@ -218,6 +218,12 @@ def main(argv=None):
         clear()
         print("[free_lines] cooldown state cleared")
     if args.discover:
+        # CLI runs outside server.py, so .env is not loaded automatically.
+        try:
+            from env_loader import load_env_file
+            load_env_file()
+        except ImportError:  # pragma: no cover
+            pass
         key = os.environ.get("OPENROUTER_API_KEY", "")
         model, source = resolve_openrouter_model(key, force=True)
         print(f"[free_lines] OpenRouter free model: {model} (source={source})")

@@ -133,6 +133,23 @@ class DiscoveryTests(unittest.TestCase):
             disc.assert_not_called()
 
 
+class CLITests(unittest.TestCase):
+    def test_discover_cli_loads_env_before_reading_key(self):
+        # `free_lines.py --discover` runs without server.py, so it must load
+        # .env itself; otherwise the key is empty and discovery silently falls
+        # back to the static seed (observed on the production host).
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "cache.json"
+            with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}, clear=False), \
+                    mock.patch("env_loader.load_env_file",
+                               side_effect=lambda: os.environ.update(
+                                   {"OPENROUTER_API_KEY": "from-env"})), \
+                    mock.patch.object(fl, "resolve_openrouter_model",
+                                      return_value=("discovered:free", "discovery")) as res:
+                fl.main(["--discover"])
+            self.assertEqual(res.call_args.args[0], "from-env")
+
+
 class ReasoningTests(unittest.TestCase):
     def test_extract_reasoning_from_openai_response(self):
         resp = {"choices": [{"message": {"content": "", "reasoning_content": "thinking..."}}]}
