@@ -73,6 +73,22 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(body["auth"])
         self.assertNotIn("ARK_API_KEY", json.dumps(body))
 
+    def test_health_reports_config_fingerprint(self):
+        _, body = call(self.base, "/health")
+        self.assertIn("config_hash", body)
+        self.assertEqual(len(body["config_hash"]), 12)
+        self.assertIn("providers", body)
+        self.assertEqual(len(body["providers"]), body["providers_configured"])
+        self.assertTrue(body["config_ok"])
+        self.assertEqual(body["drift"], [])
+
+    def test_health_reports_drift_when_expectations_are_set(self):
+        with mock.patch.dict("os.environ", {"AI_ROUTER_EXPECT_VERSION": "0.0.0"}):
+            _, body = call(self.base, "/health")
+        self.assertFalse(body["config_ok"])
+        self.assertTrue(body["drift"])
+        self.assertTrue(any("version" in d for d in body["drift"]))
+
     def test_ask_requires_token(self):
         code, body = call(self.base, "/ask", {"prompt": "hi"})
         self.assertEqual(code, 401)

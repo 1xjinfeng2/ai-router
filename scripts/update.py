@@ -35,6 +35,7 @@ EXIT_BEHIND = 1
 EXIT_ERROR = 2
 EXIT_DIRTY = 3
 EXIT_TEST_FAILED = 4
+EXIT_SMOKE_FAILED = 5
 
 
 def _run(args, cwd, timeout=120, env_extra=None):
@@ -175,8 +176,43 @@ def status(repo):
     return info
 
 
-def apply_update(repo, zip_to=None, run_tests=True, timeout=600):
-    """Fast-forward pull, verify, roll back on any failure. Returns (code, notes)."""
+def smoke_test(repo, url, timeout=15):
+    """Verify the RUNNING service matches the code we just deployed.
+
+    A green test suite only proves the files on disk are sound - it does not
+    prove the service was restarted, or that its .env has the right keys. This
+    check catches exactly the '1.6.3 on disk, 1.6.2 in production' drift.
+    """
+    try:
+        sys.path.insert(0, str(Path(repo) / "scripts"))
+        import health_check  # noqa: PLC0415
+        import judge  # noqa: PLC0415
+        from env_loader import load_env_file  # noqa: PLC0415
+        load_env_file()
+    except ImportError as e:
+        return False, [f"cannot import health check helpers: {e}"]
+
+    expect = {"version": read_version(Path(repo) / "SKILL.md")}
+    try:
+        expect["providers"] = len(judge.configured_providers())
+    except Exception:  # noqa: BLE001
+        pass
+
+    health, err = health_check.fetch(url, timeout)
+    if health is None:
+        return False, [f"unreachable: {err}"]
+    ok, problems, _ = health_check.evaluate(health, expect, env={})
+    problems.extend("server-side: " + d for d in (health.get("drift") or []))
+    return ok and not (health.get("drift")), problems
+
+
+def apply_update(repo, zip_to=None, run_tests=True, timeout=600,
+                 smoke_url=None, smoke_timeout=15):
+    """Fast-forward pull, verify, smoke-test, roll back on any failure.
+
+    Returns (code, notes). The rollback covers smoke failures too, so a bad
+    release never stays on disk.
+    """
     notes = []
     if not has_git(repo):
         return EXIT_ERROR, ["not a git checkout - update the zip manually"]
@@ -194,6 +230,10 @@ def apply_update(repo, zip_to=None, run_tests=True, timeout=600):
         return EXIT_ERROR, notes + [f"pull failed: {err or out}"]
     notes.append("pulled: " + (out.splitlines()[-1] if out else "ok"))
 
+    def rollback(why):
+        git(["reset", "--hard", before], repo, timeout=60)
+        notes.append(f"ROLLED BACK to {before[:7]} - {why}, nothing kept")
+
     if run_tests:
         steps = [[sys.executable, "-m", "compileall", "-q", "scripts", "tests"],
                  [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"]]
@@ -202,9 +242,17 @@ def apply_update(repo, zip_to=None, run_tests=True, timeout=600):
             tail = (out or err or "").strip().splitlines()[-1:] or [""]
             notes.append(f"{' '.join(step[2:4])}: exit {code} {tail[-1]}")
             if code != 0:
-                git(["reset", "--hard", before], repo, timeout=60)
-                notes.append(f"ROLLED BACK to {before[:7]} - tests failed, nothing kept")
+                rollback("tests failed")
                 return EXIT_TEST_FAILED, notes
+
+    if smoke_url:
+        ok, problems = smoke_test(repo, smoke_url, smoke_timeout)
+        notes.append(f"smoke {smoke_url}: {'OK' if ok else 'FAILED'}")
+        for prob in problems:
+            notes.append(f"  - {prob}")
+        if not ok:
+            rollback("deploy smoke test failed")
+            return EXIT_SMOKE_FAILED, notes
 
     if zip_to:
         code, out, err = _run([sys.executable, "scripts/package.py", "--output", str(zip_to)],
@@ -225,6 +273,10 @@ def build_parser():
     p.add_argument("--repo", default=str(ROOT), help="repo root (default: the skill folder)")
     p.add_argument("--zip", metavar="DIR", help="rebuild the distributable zip into DIR after updating")
     p.add_argument("--no-test", action="store_true", help="skip the post-pull test gate")
+    p.add_argument("--smoke-url", default=os.environ.get("AI_ROUTER_HEALTH_URL"),
+                   metavar="URL", help="after updating, verify the running service's "
+                   "/health (env: AI_ROUTER_HEALTH_URL); roll back on drift")
+    p.add_argument("--smoke-timeout", type=float, default=15)
     p.add_argument("--json", action="store_true", help="structured output on stdout")
     return p
 
@@ -234,7 +286,9 @@ def main(argv=None):
     repo = Path(args.repo).expanduser().resolve()
 
     if args.apply:
-        code, notes = apply_update(repo, args.zip, run_tests=not args.no_test)
+        code, notes = apply_update(repo, args.zip, run_tests=not args.no_test,
+                                  smoke_url=args.smoke_url,
+                                  smoke_timeout=args.smoke_timeout)
         if args.json:
             print(json.dumps({"ok": code == EXIT_CURRENT, "exit": code, "notes": notes},
                              ensure_ascii=False, indent=2))

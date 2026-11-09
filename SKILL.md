@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.6.3
+version: 1.6.4
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -393,8 +393,9 @@ no VCS at all. `scripts/update.py` makes staying current one command, and makes
 it safe by refusing to lose work.
 
 ```bash
-python scripts/update.py --check         # 0 current · 1 update available · 2 error · 3 dirty
+python scripts/update.py --check         # 0 current · 1 update available · 2 error · 3 dirty · 5 smoke drift
 python scripts/update.py --apply         # git pull --ff-only, then run the tests
+python scripts/update.py --apply --smoke-url http://127.0.0.1/health  # + verify the RUNNING service
 python scripts/update.py --apply --zip D:/dist   # ... and rebuild the distributable zip
 ```
 
@@ -404,9 +405,30 @@ Rules it enforces:
 - after the pull the full test suite runs; on any failure it `git reset --hard`
   back to the exact commit you were on (exit 4), so a bad upstream commit can
   never leave the skill broken;
+- `--smoke-url` additionally checks the **running** `/health` against the just
+  deployed version and provider count. A green test suite only proves the files
+  on disk are sound — it does not prove the service was restarted or that its
+  `.env` has the right keys. Drift (or an unreachable service) rolls back too
+  (exit 5). This is what catches "1.6.3 on disk, 1.6.2 in production";
 - when git or SSH is unavailable it falls back to reading `SKILL.md` over HTTPS
   and compares version numbers only — nothing is downloaded;
 - `--no-test` skips the gate (faster, but you give up the rollback guarantee).
+
+**Deployment drift**: `GET /health` returns `config_hash` (a 12-char fingerprint
+over version + provider set), the provider list, `config_ok` and `drift[]`. Set
+`AI_ROUTER_EXPECT_VERSION` / `AI_ROUTER_EXPECT_PROVIDERS` /
+`AI_ROUTER_EXPECT_CONFIG_HASH` on the server and it will flag its own drift.
+Check any deployment without spending money:
+
+```bash
+python scripts/health_check.py --url http://127.0.0.1/health \
+    --expect-version 1.6.3 --expect-providers 16   # 0 ok · 1 drift · 2 unreachable
+```
+
+On the server, `scripts/server_deploy.py --zip /tmp/ai-router.zip` snapshots the
+current release, unpacks the new one (never touching `.env` / `*.db`), restarts
+systemd, smoke-tests `/health`, and restores the backup automatically on any
+failure. See `references/deploy.md`.
 
 **Run it when** the user asks 有没有新版本 / 更新一下 / 自动更新 / "update
 yourself", or before work where a known upstream fix matters.
@@ -422,7 +444,8 @@ python scripts/server.py --host 127.0.0.1 --port 8787 --token "$TOKEN"
 curl -H "Authorization: Bearer $TOKEN" -d '{"prompt":"写条通知"}' localhost:8787/ask
 ```
 
-- Routes: `GET /health` (open), `GET /providers`, `GET /usage?days=7`,
+- Routes: `GET /health` (open; also reports `config_hash` / `config_ok` /
+  `drift[]` for deployment drift), `GET /providers`, `GET /usage?days=7`,
   `POST /route` (decide only, free), `POST /ask` (route + call).
 - Refuses to bind a non-loopback address without a token; 1 MiB body cap
   (8 MiB when images are inline), 20k-char prompt cap, 8 images/request,
@@ -458,7 +481,9 @@ that reboots mid-task should never ruin a real deliverable. It falls back to
 - `scripts/privacy.py` — local PII vault: redact / restore / TTL / optional encryption / stream restore
 - `scripts/relay.py` — privacy relay orchestrator: redact → fan-out → organize or vote → restore
 - `scripts/usage.py` — local usage metering + response cache + provider health report (`--report`, `--health`, `--expire`); DB location overridable via `AI_ROUTER_USAGE_DB`
-- `scripts/update.py` — self-update from the git remote: version compare, dirty-tree guard, pull + test gate, auto rollback (`--check` / `--apply`)
+- `scripts/update.py` — self-update from the git remote: version compare, dirty-tree guard, pull + test gate, deploy smoke test, auto rollback (`--check` / `--apply` / `--smoke-url`)
+- `scripts/health_check.py` — deployment drift detection (config hash + expectations), shared by server, update.py and deploy scripts
+- `scripts/server_deploy.py` — on-server release: snapshot → unpack → restart → smoke → auto rollback
 - `scripts/server.py` — HTTP service: `/ask`, `/route`, `/health`, `/providers`, `/usage`, bearer auth, rate limit
 - `tests/` — 138 stdlib `unittest` cases (privacy, retry/fallback, cache, routing, auto mode, self-update, HTTP server, custom endpoint, packaging)
 - `.github/workflows/ci.yml` — CI: compile + unit tests + packaging guard on Python 3.10/3.13 (runner pinned to ubuntu-24.04)

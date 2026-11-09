@@ -162,6 +162,46 @@ docker run -d --env-file .env -e AI_ROUTER_SERVER_TOKEN=... -p 127.0.0.1:8787:87
 - 服务器上的 `.env` 是所有人的 Key：`chmod 600 .env`，不要 commit（已在 `.gitignore`）。
 - 用量与隐私库留在服务器本地（`usage.db` / `privacy_vault.db`），备份按公司数据规范处理。
 
+## 7.1 一键发布与漂移自检（2026-11-09）
+
+代码测试全绿**不等于**线上正确：曾出现本地 1.6.3 / 16 线路、线上却仍是
+1.6.2 / 12 线路（新接的三条免费线路等于没上线）。发布后必须冒烟。
+
+在服务器上（先上传分发包到 `/tmp/ai-router.zip`）：
+
+```bash
+# 1) 带备份 + 冒烟 + 自动回滚的发布
+python3 /opt/ai-router/scripts/server_deploy.py --zip /tmp/ai-router.zip \
+    --expect-providers 16
+
+# 2) 任何时候单独体检（不花钱、不改东西）
+python3 /opt/ai-router/scripts/health_check.py \
+    --url http://127.0.0.1/health --expect-version 1.6.4 --expect-providers 16
+echo $?   # 0 健康 · 1 漂移 · 2 不可达
+```
+
+`server_deploy.py` 的流程：把 `scripts/`、`tests/`、三个文档快照到
+`/opt/ai-router/backups/<时间戳>/` → 解包覆盖（**跳过 `.env` 与 `*.db`**，绝不碰密钥）
+→ 修正属主 → `systemctl restart` → 冒烟 `/health` 比对新版本号与线路数
+→ 任何一步失败就恢复备份、重启、再次核验。
+
+服务端 `/health` 现在返回：
+
+```json
+{"ok": true, "version": "1.6.4", "providers_configured": 16,
+ "providers": ["..."], "config_hash": "eef354bd370f",
+ "config_ok": true, "drift": [], "auth": true}
+```
+
+`config_hash` 是「版本 + 已配置 provider 集合」的 12 位指纹，不是密钥。
+在服务端设 `AI_ROUTER_EXPECT_VERSION` / `AI_ROUTER_EXPECT_PROVIDERS` /
+`AI_ROUTER_EXPECT_CONFIG_HASH`，`/health` 就会在 `drift[]` 里自报违规，
+监控探针无需知道期望值也能发现配置被改动。
+
+本地开发机上，`python scripts/update.py --apply --smoke-url http://127.0.0.1/health`
+把同一套校验接到自更新流程：拉代码→测试→冒烟，任一失败都 `git reset --hard`
+回滚到更新前的提交（冒烟失败为退出码 5）。
+
 ## 8. 已知限制
 
 - `/ask` 是**同步**的：长文（几千字）可能跑 1-2 分钟，客户端和反代超时都要放宽。

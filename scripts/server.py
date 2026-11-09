@@ -46,6 +46,7 @@ load_env_file()
 
 import ask  # noqa: E402
 import call_model  # noqa: E402
+import health_check  # noqa: E402
 import judge  # noqa: E402
 
 MAX_BODY = 1 << 20          # 1 MiB, text requests
@@ -206,16 +207,27 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/health":
             # Deliberately open: monitoring needs it, and it leaks nothing but
-            # provider names the caller could guess anyway.
+            # provider names the caller could guess anyway. The config hash is
+            # a fingerprint, never a secret.
             configured = sorted(judge.configured_providers())
-            self._send(200, {
+            version = skill_version()
+            payload = {
                 "ok": True,
-                "version": skill_version(),
+                "version": version,
                 "uptime_s": int(time.time() - START_TS),
                 "providers_configured": len(configured),
+                "providers": configured,
+                "config_hash": health_check.config_hash(version, configured),
                 "custom_endpoint": bool(call_model.PROVIDERS["custom"][0]),
                 "auth": bool(self.server.token),
-            })
+            }
+            # Server-side drift detection: when the deploy manifest declares
+            # expectations via env vars, /health reports violations so a
+            # monitoring probe can alert even before a deploy script runs.
+            _, drift, _ = health_check.evaluate(payload, env=os.environ)
+            payload["config_ok"] = not drift
+            payload["drift"] = drift
+            self._send(200, payload)
             return
 
         if not self._guard():
