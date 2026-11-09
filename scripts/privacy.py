@@ -133,6 +133,88 @@ def encryption_enabled():
     return flag == "1" and bool(os.environ.get("AI_ROUTER_VAULT_PASSPHRASE"))
 
 
+# ---------------------------------------------------------------------------
+# One-time onboarding hint for encryption
+# ---------------------------------------------------------------------------
+# Why this exists: encryption is opt-in, so a fresh vault stores real phone
+# numbers and ID cards in plaintext SQLite. The only existing signal was a
+# warning printed per stored row, which fires *after* the data is already on
+# disk and scrolls past in normal use. A single, well-placed line at first real
+# use is what actually gets people to turn encryption on -- but repeating it
+# every run would train them to ignore our stderr, so it fires exactly once and
+# leaves a marker file next to the vault. Set AI_ROUTER_NO_TIPS=1 to mute it.
+HINT_MARKER_SUFFIX = ".enc-hint"
+
+
+def _hint_marker(db_path=None):
+    p = Path(db_path) if db_path else DB_PATH
+    return p.parent / (p.name + HINT_MARKER_SUFFIX)
+
+
+def _truthy_env(name):
+    return str(os.environ.get(name, "")).strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def encryption_guide():
+    """The how-to-enable sentence, worded for the current environment.
+
+    Split out from encryption_hint() so `--guide` can reprint the exact same
+    wording months later without depending on the one-shot marker.
+    """
+    if _have_crypto():
+        return ("export AI_ROUTER_VAULT_PASSPHRASE='<a long passphrase>' then run "
+                "`python scripts/privacy.py --encrypt`")
+    return ("run `pip install cryptography`, then export "
+            "AI_ROUTER_VAULT_PASSPHRASE='<a long passphrase>' and run "
+            "`python scripts/privacy.py --encrypt`")
+
+
+def encryption_hint(db_path=None):
+    """Return the onboarding hint text, or None when it must stay silent.
+
+    Pure decision + best-effort marker write, so it is testable without a
+    terminal. Silence reasons: user opted out, encryption is already
+    configured, or the hint was already shown for this vault.
+    """
+    if _truthy_env("AI_ROUTER_NO_TIPS"):
+        return None
+    if os.environ.get("AI_ROUTER_VAULT_PASSPHRASE") or encryption_enabled():
+        return None
+    marker = _hint_marker(db_path)
+    if marker.exists():
+        return None
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("shown\n", encoding="utf-8")
+    except OSError:
+        # A read-only vault directory must never break redaction; worst case the
+        # hint reappears next run.
+        pass
+    return ("[privacy] the vault keeps PII in plaintext by default. To encrypt it: "
+            + encryption_guide()
+            + " (hint shown once; AI_ROUTER_NO_TIPS=1 mutes it)")
+
+
+def maybe_hint_encryption(stream=None):
+    """Print the onboarding hint at most once. Returns the text actually shown.
+
+    Deliberately NOT gated on `stderr.isatty()`: the dominant caller is an agent
+    running this CLI with a captured stderr, and that captured line is exactly
+    how the hint reaches a human ("your vault is plaintext, here is the fix").
+    A TTY check would hide it in precisely the case that matters. Cost of being
+    wrong is one line, once, per vault.
+    """
+    out = sys.stderr if stream is None else stream
+    text = encryption_hint()
+    if text:
+        out.write(text + "\n")
+        try:
+            out.flush()
+        except Exception:  # noqa: BLE001
+            pass
+    return text
+
+
 def _fernet(conn):
     """Build a Fernet from AI_ROUTER_VAULT_PASSPHRASE + per-vault salt."""
     from cryptography.fernet import Fernet
@@ -275,6 +357,10 @@ def redact(text, session_id=None, custom=None, strict=False):
                     f"[privacy] swept {dropped} row(s) older than {DEFAULT_TTL_DAYS}d\n")
         except Exception:  # noqa: BLE001
             pass
+    # Only nag when PII actually landed in the vault -- that is the moment the
+    # plaintext-versus-encrypted choice starts to matter.
+    if total:
+        maybe_hint_encryption()
     return {
         "text": working,
         "session_id": session_id,
@@ -471,8 +557,18 @@ def main():
                     help="encrypt existing rows (needs cryptography + AI_ROUTER_VAULT_PASSPHRASE)")
     ap.add_argument("--decrypt", action="store_true", help="revert rows to plaintext")
     ap.add_argument("--status", action="store_true", help="show vault TTL/encryption status")
+    ap.add_argument("--guide", action="store_true",
+                    help="print the encryption setup guide again (re-arms after the one-time hint)")
     args = ap.parse_args()
 
+    if args.guide:
+        # No env fiddling and no marker check: an explicit request always wins,
+        # so a hint consumed months ago can still be re-read.
+        if encryption_enabled():
+            print("[privacy] encryption is already enabled for this vault")
+        else:
+            print(f"[privacy] encrypt the vault: {encryption_guide()}")
+        return
     if args.status:
         enc = "on" if encryption_enabled() else "off"
         c = _conn()

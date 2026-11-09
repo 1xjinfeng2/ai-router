@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for the privacy vault (redact / restore / TTL / encryption)."""
+import io
 import os
 import sys
 import tempfile
@@ -18,9 +19,17 @@ class PrivacyTests(unittest.TestCase):
         self._old_db = privacy.DB_PATH
         privacy.DB_PATH = Path(self._tmp.name) / "vault.db"
         os.environ.pop("AI_ROUTER_VAULT_PASSPHRASE", None)
+        # Keep the one-time encryption hint out of these assertions' output; the
+        # hint has its own test class that re-enables it.
+        self._old_no_tips = os.environ.get("AI_ROUTER_NO_TIPS")
+        os.environ["AI_ROUTER_NO_TIPS"] = "1"
 
     def tearDown(self):
         privacy.DB_PATH = self._old_db
+        if self._old_no_tips is None:
+            os.environ.pop("AI_ROUTER_NO_TIPS", None)
+        else:
+            os.environ["AI_ROUTER_NO_TIPS"] = self._old_no_tips
         self._tmp.cleanup()
 
     def test_roundtrip_all_high_confidence_types(self):
@@ -123,10 +132,16 @@ class StreamRestorerTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._old_db = privacy.DB_PATH
         privacy.DB_PATH = Path(self._tmp.name) / "vault.db"
+        self._old_no_tips = os.environ.get("AI_ROUTER_NO_TIPS")
+        os.environ["AI_ROUTER_NO_TIPS"] = "1"
         self.r = privacy.redact("电话13800138000 邮箱a@b.com")
 
     def tearDown(self):
         privacy.DB_PATH = self._old_db
+        if self._old_no_tips is None:
+            os.environ.pop("AI_ROUTER_NO_TIPS", None)
+        else:
+            os.environ["AI_ROUTER_NO_TIPS"] = self._old_no_tips
         self._tmp.cleanup()
 
     def test_placeholder_split_across_chunks(self):
@@ -152,6 +167,89 @@ class StreamRestorerTests(unittest.TestCase):
         second = restorer.feed("NE_1> suffix")
         self.assertEqual(second, "13800138000 suffix")
         self.assertEqual(restorer.flush(), "")
+
+
+class EncryptionHintTests(unittest.TestCase):
+    """One-time encryption onboarding hint (fires once, then stays quiet)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._old_db = privacy.DB_PATH
+        privacy.DB_PATH = Path(self._tmp.name) / "vault.db"
+        self._env = {k: os.environ.pop(k, None) for k in
+                     ("AI_ROUTER_VAULT_PASSPHRASE", "AI_ROUTER_NO_TIPS")}
+
+    def tearDown(self):
+        privacy.DB_PATH = self._old_db
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self._tmp.cleanup()
+
+    def test_hint_fires_once_then_stays_silent(self):
+        first = privacy.encryption_hint()
+        self.assertIsNotNone(first)
+        self.assertIn("AI_ROUTER_VAULT_PASSPHRASE", first)
+        self.assertTrue(privacy._hint_marker().exists())
+        self.assertIsNone(privacy.encryption_hint())
+
+    def test_marker_lives_next_to_vault(self):
+        privacy.encryption_hint()
+        self.assertEqual(privacy._hint_marker().parent, privacy.DB_PATH.parent)
+
+    def test_no_hint_when_passphrase_already_set(self):
+        os.environ["AI_ROUTER_VAULT_PASSPHRASE"] = "x" * 20
+        self.assertIsNone(privacy.encryption_hint())
+        self.assertFalse(privacy._hint_marker().exists())
+
+    def test_opt_out_env_suppresses_hint(self):
+        os.environ["AI_ROUTER_NO_TIPS"] = "1"
+        self.assertIsNone(privacy.encryption_hint())
+        self.assertFalse(privacy._hint_marker().exists())
+
+    def test_maybe_hint_writes_to_given_stream(self):
+        buf = io.StringIO()
+        text = privacy.maybe_hint_encryption(stream=buf)
+        self.assertIn("plaintext", text)
+        self.assertEqual(buf.getvalue(), text + "\n")
+
+    def test_default_stream_uses_sys_stderr_and_consumes_marker(self):
+        old = sys.stderr
+        sys.stderr = io.StringIO()
+        try:
+            text = privacy.maybe_hint_encryption()
+            printed = sys.stderr.getvalue()
+        finally:
+            sys.stderr = old
+        self.assertIn(text, printed)
+        # Second call is silent: the marker written by the first call holds.
+        self.assertIsNone(privacy.maybe_hint_encryption())
+
+    def test_redact_asks_for_hint_only_when_pii_stored(self):
+        # The call site guards on count>0, so a prompt with no PII must not fire
+        # it. The printing itself is covered by the maybe_hint tests above.
+        calls = []
+        old = privacy.maybe_hint_encryption
+        privacy.maybe_hint_encryption = lambda: calls.append(1)
+        try:
+            privacy.redact("这段没有个人信息")
+            self.assertEqual(calls, [])
+            privacy.redact("电话13800138000")
+            self.assertEqual(calls, [1])
+        finally:
+            privacy.maybe_hint_encryption = old
+
+    def test_guide_names_dependency_when_crypto_missing(self):
+        old = privacy._have_crypto
+        try:
+            privacy._have_crypto = lambda: False
+            self.assertIn("pip install cryptography", privacy.encryption_guide())
+            privacy._have_crypto = lambda: True
+            self.assertNotIn("pip install", privacy.encryption_guide())
+        finally:
+            privacy._have_crypto = old
 
 
 if __name__ == "__main__":

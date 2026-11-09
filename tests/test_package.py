@@ -36,7 +36,8 @@ class PackagingTests(unittest.TestCase):
         return p
 
     def test_secrets_and_databases_are_excluded(self):
-        for rel in (".env", "privacy_vault.db", "usage.db", "scripts/x.pyc"):
+        for rel in (".env", "privacy_vault.db", "usage.db", "scripts/x.pyc",
+                    "privacy_vault.db.enc-hint"):
             p = self._write(rel, "x")
             self.assertTrue(package.should_skip(p), rel)
 

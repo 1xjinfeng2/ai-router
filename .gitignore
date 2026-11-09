@@ -6,6 +6,8 @@ privacy_vault.db
 # Local usage meter (token/cost tracking) — never commit
 usage.db
 *.db
+# One-shot "encryption hint already shown" marker written beside the vault
+*.enc-hint
 
 # Python cache
 __pycache__/

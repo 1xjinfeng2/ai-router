@@ -40,7 +40,7 @@
 4. ✅ 可选加密：`cryptography` + `AI_ROUTER_VAULT_PASSPHRASE` → PBKDF2(200k)+Fernet，`enc:v1:` 前缀，`--encrypt/--decrypt`；无依赖时优雅降级并明确提示
 
 ### Phase 2 · 质量保障（已完成 ✅）
-5. ✅ 单测：`tests/` 94 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
+5. ✅ 单测：`tests/` 137 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
 6. ✅ GitHub Actions CI：Python 3.10 / 3.13 双版本（runner 固定 `ubuntu-24.04`），编译 + 单测 + `package.py --check-only` + 脱敏冒烟
 
 ### Phase 3 · 体验增强（已完成 ✅）
@@ -54,9 +54,9 @@
 
 12. ✅ HTTP 服务：`scripts/server.py` 提供 `/ask` `/route` `/health` `/providers` `/usage`，bearer 鉴权（非回环无 token 拒绝启动）、按 IP 限流、体积上限、提示词不入日志；客户端设 `AI_ROUTER_SERVER` 即改为远端调用
 13. ✅ 自建模型服务：`--provider custom` 接 vLLM / Ollama / one-api 网关，端点与模型由环境变量给定，`AI_ROUTER_CUSTOM_ROUTES` 控制它接哪些任务（默认仅 `cheap`），失败降级 `th-flash → doubao`；部署手册见 `references/deploy.md`
+14. ✅ 加密引导：首次真正落库 PII 时在 stderr 打一行可照抄的开启命令（未装 `cryptography` 时先提示安装），随后在库旁写 `<vault>.enc-hint` 标记不再重复；`--guide` 随时重看，`AI_ROUTER_NO_TIPS=1` 静音。刻意不做 TTY 判断——主要调用方是 agent，捕获到的 stderr 正是把这行送到人眼前的方式
 
 ### 仍开放（按价值排序）
-- [ ] 加密默认开启的引导流程（首次运行提示设置口令）
 - [ ] HTTP 服务的 SSE 流式与异步任务（当前 /ask 同步返回）
 - [ ] 投票支持加权融合（现在只选最优，不做加权拼接）
 - [ ] 流式接入汇总链路（当前 organizer 需完整文本）

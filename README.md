@@ -21,7 +21,7 @@
 - 🌐 **可部署成 HTTP 服务**：手机、别的电脑、公司系统都能借用服务器上的 Key，带 token 鉴权与限流
 - 🖥️ **可接自建模型**：服务器上的 vLLM / Ollama / one-api 网关作为 `custom` 供应商，走自己的 GPU
 - 🔄 **自动更新**：`update.py --check/--apply` 升级到新版，拉取后自动跑测试，失败即回滚到原提交，绝不把技能搞坏
-- 🧪 **126 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、自我更新回滚、打包密钥扫描全覆盖
+- 🧪 **137 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、自我更新回滚、打包密钥扫描全覆盖
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -479,6 +479,13 @@ python scripts/privacy.py --restore --session <sid> --text "<PII_PHONE_1>"   # �
 
 没装 `cryptography` 时不会报错崩溃，而是明确提示「加密不可用」并保持明文——保证零依赖安装仍能正常工作。⚠️ 口令丢失 = 数据无法恢复；加密防的是「库文件被拷走」，不防本机被入侵。
 
+**首次使用会有一次加密引导**：第一次真的把 PII 写进库里时，stderr 会打一行提示，告诉你当前是明文、以及开启加密的完整命令（没装依赖时会先让你 `pip install cryptography`）。这行只出现**一次**——之后在库文件旁边留一个 `*.enc-hint` 标记，不再打扰；想随时重看用 `--guide`，完全静音用 `AI_ROUTER_NO_TIPS=1`。
+
+```bash
+python scripts/privacy.py --guide           # 重新打印加密设置指南（不受一次性标记影响）
+AI_ROUTER_NO_TIPS=1 python scripts/privacy.py --redact "电话13800138000"   # 静音引导
+```
+
 ## 自动更新
 
 装在多台机器上、发给同事、或者你自己改了本地文件之后，最大的风险不是"没更新"，而是"更新把能用的版本弄坏了"。`scripts/update.py` 就是为这件事写的：
@@ -568,7 +575,7 @@ python scripts/ask.py --prompt "嗯" --dry-run        # 应看到 provider=custo
 ## 测试与 CI
 
 ```bash
-python -m unittest discover -s tests -v     # 126 项单测，全部标准库 unittest
+python -m unittest discover -s tests -v     # 137 项单测，全部标准库 unittest
 python -m compileall -q scripts tests       # 语法检查
 python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
 ```
@@ -615,7 +622,7 @@ ai-router/
 │   ├── update.py         # 自我更新：版本比对、脏工作区保护、拉取后测试、失败回滚
 │   ├── server.py         # HTTP 服务：/ask /route /health /providers /usage + 鉴权限流
 │   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 各类 .db）
-├── tests/                # 126 项标准库单测（无需任何依赖）
+├── tests/                # 137 项标准库单测（无需任何依赖）
 │   ├── test_privacy.py   # 脱敏↔还原、TTL、加密、流式还原
 │   ├── test_call_model.py# 错误分类、退避重试、跨模型降级、token 扩容
 │   ├── test_usage.py     # 计量聚合、缓存键、健康度、过期清理
