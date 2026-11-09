@@ -41,6 +41,12 @@ class PackagingTests(unittest.TestCase):
             p = self._write(rel, "x")
             self.assertTrue(package.should_skip(p), rel)
 
+    def test_agent_memory_dir_is_excluded(self):
+        # .workbuddy/ holds local automation memory; it must never be packaged
+        # or pushed into the public repo.
+        p = self._write(".workbuddy/memory/2026-11-09.md", "internal notes")
+        self.assertTrue(package.should_skip(p))
+
     def test_env_example_is_kept(self):
         p = self._write(".env.example", "ARK_API_KEY=")
         self.assertFalse(package.should_skip(p))

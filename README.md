@@ -21,7 +21,7 @@
 - 🌐 **可部署成 HTTP 服务**：手机、别的电脑、公司系统都能借用服务器上的 Key，带 token 鉴权与限流
 - 🖥️ **可接自建模型**：服务器上的 vLLM / Ollama / one-api 网关作为 `custom` 供应商，走自己的 GPU
 - 🔄 **自动更新**：`update.py --check/--apply` 升级到新版，拉取后自动跑测试，失败即回滚到原提交，绝不把技能搞坏
-- 🧪 **137 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、自我更新回滚、打包密钥扫描全覆盖
+- 🧪 **138 项单测 + GitHub Actions CI**：脱敏往返、降级链、缓存、自我更新回滚、打包密钥扫描全覆盖
 - 🔧 **易扩展**：加一个新供应商只需改几行配置
 
 ## 支持的供应商
@@ -575,7 +575,7 @@ python scripts/ask.py --prompt "嗯" --dry-run        # 应看到 provider=custo
 ## 测试与 CI
 
 ```bash
-python -m unittest discover -s tests -v     # 137 项单测，全部标准库 unittest
+python -m unittest discover -s tests -v     # 138 项单测，全部标准库 unittest
 python -m compileall -q scripts tests       # 语法检查
 python scripts/package.py --check-only      # 打包前置校验 + 密钥扫描
 ```
@@ -622,7 +622,7 @@ ai-router/
 │   ├── update.py         # 自我更新：版本比对、脏工作区保护、拉取后测试、失败回滚
 │   ├── server.py         # HTTP 服务：/ask /route /health /providers /usage + 鉴权限流
 │   └── package.py        # 零依赖安全打包（排除密钥 / .git / 缓存 / 各类 .db）
-├── tests/                # 137 项标准库单测（无需任何依赖）
+├── tests/                # 138 项标准库单测（无需任何依赖）
 │   ├── test_privacy.py   # 脱敏↔还原、TTL、加密、流式还原
 │   ├── test_call_model.py# 错误分类、退避重试、跨模型降级、token 扩容
 │   ├── test_usage.py     # 计量聚合、缓存键、健康度、过期清理

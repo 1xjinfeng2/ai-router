@@ -23,7 +23,7 @@ NAME = ROOT.name
 
 EXCLUDE_DIRS = {
     ".git", "__pycache__", ".venv", "venv", ".idea", ".vscode",
-    "dist", "build", ".pytest_cache", ".mypy_cache",
+    "dist", "build", ".pytest_cache", ".mypy_cache", ".workbuddy",
 }
 EXCLUDE_NAMES = {".env", ".DS_Store", "Thumbs.db", "privacy_vault.db", "usage.db"}
 EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".zip", ".log", ".bak", ".db",

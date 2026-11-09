@@ -26,3 +26,6 @@ build/
 .idea/
 .vscode/
 *.log
+
+# Agent-side working notes (automation memory, local scratch) — never published
+.workbuddy/

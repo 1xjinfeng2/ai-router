@@ -40,7 +40,7 @@
 4. ✅ 可选加密：`cryptography` + `AI_ROUTER_VAULT_PASSPHRASE` → PBKDF2(200k)+Fernet，`enc:v1:` 前缀，`--encrypt/--decrypt`；无依赖时优雅降级并明确提示
 
 ### Phase 2 · 质量保障（已完成 ✅）
-5. ✅ 单测：`tests/` 137 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
+5. ✅ 单测：`tests/` 138 项标准库 unittest，覆盖脱敏↔还原（含跨 chunk 流式还原）、TTL、加密往返、错误分类、退避重试、跨模型降级、token 扩容、缓存键敏感性、计量聚合、健康度、打包排除与密钥扫描
 6. ✅ GitHub Actions CI：Python 3.10 / 3.13 双版本（runner 固定 `ubuntu-24.04`），编译 + 单测 + `package.py --check-only` + 脱敏冒烟
 
 ### Phase 3 · 体验增强（已完成 ✅）
@@ -69,4 +69,4 @@
 
 - 2026-11-05 | 92f50bb | 新增自我更新（版本比对/脏工作区拦截/测试门+回滚），CI 矩阵 3.9/3.12 → 3.10/3.13 | 94 | 加密引导、投票加权、汇总流式
 - 2026-11-05 | 8390076 | 新增 HTTP 服务（server.py，鉴权/限流/体积上限）与自建模型 provider `custom`；ask.py 支持远端模式 | 114 | 服务端 SSE 流式、异步任务
-- 2026-11-09 | e1ad00e | 首次落库 PII 时一次性打印加密引导（`encryption_hint`/`maybe_hint_encryption`＋`--guide`，`AI_ROUTER_NO_TIPS=1` 静音，vault 旁 `.enc-hint` 标记；刻意不做 TTY 判断，让 agent 捕获的 stderr 能把提示带到人眼前），`.enc-hint` 同步排除出 git 与打包，版本 1.6.2→1.6.3 | 137 | 投票加权融合、汇总链路流式、服务端 SSE/异步、Ollama 接入
+- 2026-11-09 | e1ad00e | 首次落库 PII 时一次性打印加密引导（`encryption_hint`/`maybe_hint_encryption`＋`--guide`，`AI_ROUTER_NO_TIPS=1` 静音，vault 旁 `.enc-hint` 标记；刻意不做 TTY 判断，让 agent 捕获的 stderr 能把提示带到人眼前），`.enc-hint` 同步排除出 git 与打包，版本 1.6.2→1.6.3；顺手把 `.workbuddy/`（agent 本地记忆）也排除出 git 与 zip，避免下次 `git add -A` 把内部笔记推上公开仓库 | 138 | 投票加权融合、汇总链路流式、服务端 SSE/异步、Ollama 接入
