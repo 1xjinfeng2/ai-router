@@ -66,7 +66,7 @@ PROVIDERS = {
     "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY", "Qwen/Qwen3-8B", "openai"),
     "groq":        ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "openai/gpt-oss-120b", "openai"),
     "openrouter":  ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "recursive/flint-v1.0:free", "openai"),
-    "mistral":     ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral-large-latest", "openai"),
+    "mistral":     ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", "open-mistral-nemo", "openai"),
     "nvidia":      ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY", "openai/gpt-oss-120b", "openai"),
     # Self-hosted / private gateway (vLLM, Ollama, LM Studio, one-api, FastChat).
     # Base URL and model are not hardcoded: they come from the environment so the
@@ -78,6 +78,23 @@ PROVIDERS = {
 # ``custom`` is the only provider whose endpoint is user-supplied, so the static
 # table alone cannot describe it. Everything else is fixed.
 DYNAMIC_PROVIDERS = {"custom"}
+
+# Free-plan model allowlists, verified 2026-11-09 against vendor docs and live
+# free-tier reports. These three lines are not wired to a key yet, so their
+# defaults cannot be proven by a real call -- pin them to SKUs that a FREE key
+# can actually reach. Mistral answers
+#   403 "not available in your subscription tier"
+# for mistral-large-latest / mistral-small-latest / mistral-medium-*; Groq
+# retired llama-3.3-70b-versatile on 2026-08-16. Re-check with
+# `check_provider.py --provider X --scan` once a key is installed.
+FREE_PLAN_MODELS = {
+    "groq": ("openai/gpt-oss-120b", "openai/gpt-oss-20b",
+             "qwen/qwen3.8-27b"),
+    "mistral": ("open-mistral-nemo", "open-mistral-7b",
+                "ministral-3b-latest", "ministral-8b-latest",
+                "ministral-14b-latest", "codestral-latest"),
+    "nvidia": ("openai/gpt-oss-120b", "nvidia/nemotron-3-super-120b-a12b"),
+}
 
 # Load .env from the skill root using the bundled stdlib-only loader.
 try:

@@ -15,6 +15,17 @@ import os
 import subprocess
 import sys
 
+try:
+    from env_loader import load_env_file
+except ImportError:  # running from an unusual cwd
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from env_loader import load_env_file
+
+# CUSTOM_ROUTES is computed at import time below, so .env has to be visible
+# *before* those module-level os.environ reads. Loading it only inside main()
+# left standalone CLI runs stuck with the default "cheap" route.
+load_env_file()
+
 # Task type -> ordered candidate providers (best first).
 ROUTING = {
     "code":         ["claude", "th-code", "ark-deepseek", "deepseek", "openai"],

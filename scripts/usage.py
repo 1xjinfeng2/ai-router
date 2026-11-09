@@ -27,6 +27,17 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+try:
+    from env_loader import load_env_file
+except ImportError:  # package-style import
+    from .env_loader import load_env_file
+
+# A standalone `python usage.py --health` never goes through server.py, so it
+# has to load the same .env that carries AI_ROUTER_USAGE_DB. Without this the
+# path falls back to a root-owned directory on a hardened host and sqlite3
+# raises "unable to open database file" for the service account.
+load_env_file()
+
 HERE = Path(__file__).resolve().parent
 # Skill root by default. Override when the skill directory must stay read-only
 # (a packaged install, a systemd unit with ProtectSystem=strict) or when tests

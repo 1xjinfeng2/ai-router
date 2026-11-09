@@ -51,6 +51,16 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+try:
+    from env_loader import load_env_file
+except ImportError:  # package-style import
+    from .env_loader import load_env_file
+
+# Standalone CLIs (`privacy.py --list`, `--expire`) do not pass through
+# server.py; bootstrapping .env here keeps AI_ROUTER_VAULT_DB pointing at the
+# writable data/ directory on a hardened host.
+load_env_file()
+
 DB_PATH = Path(os.environ.get("AI_ROUTER_VAULT_DB")
                or (Path(__file__).resolve().parent.parent / "privacy_vault.db"))
 

@@ -3,7 +3,7 @@
 本文件的每一条都对应 `PROVIDERS` 里的一个可调用线路。**注册步骤必须你本人完成**
 （短信/邮箱验证码），但代码侧已经全部接好：拿到 Key 填进 `.env` 即可用，无需改代码。
 
-最后核实时间：2026-11-05。免费政策变动频繁，以各家控制台当日页面为准。
+最后核实时间：2026-11-09（本日复查了 Groq / Mistral / NVIDIA 三条待接线路的免费档模型白名单）。免费政策变动频繁，以各家控制台当日页面为准。
 
 ## 一、优先领这三个（国内直连、不绑卡、长期有效）
 
@@ -31,7 +31,7 @@
 | Groq | 30 RPM / 1000 次/天 / 8K TPM（每模型），速度极快 | `GROQ_API_KEY` | `openai/gpt-oss-120b` | 上下文短，长文会撞 TPM 上限 |
 | OpenRouter | 12+ 个 `:free` 模型，20 RPM / 50 次/天（充过 $10 提到 1000 次） | `OPENROUTER_API_KEY` | 运行时动态发现（见下） | `openrouter/free` 别名已失效要 credits；免费模型频繁上下架，提示词可能被记录 |
 | Google Gemini | Flash 全系免费层，免绑卡，1M 上下文，原生多模态 | `GEMINI_API_KEY` | `gemini-2.5-flash` | **国内需代理**；免费层数据用于改进产品 |
-| Mistral | Experiment 计划约 $10/月额度 | `MISTRAL_API_KEY` | `mistral-large-latest` | 默认会用你的数据训练，需手动关闭 |
+| Mistral | 免绑卡免费层，约 1 req/s；仅开放 Nemo / Ministral / Codestral 等开放权重模型 | `MISTRAL_API_KEY` | `open-mistral-nemo` | `mistral-large/medium/small` 对免费 Key 返回 **403**；免费层数据用于改进产品 |
 | NVIDIA NIM | 全目录模型免费试原型，多数 40 RPM | `NVIDIA_API_KEY` | `openai/gpt-oss-120b` | 仅限开发验证用途 |
 
 ## 四、明确不接的（省得你白折腾）
@@ -64,6 +64,29 @@ python scripts/ask.py --prompt "帮我润色一段文案" --budget --dry-run
 
 `--budget` 会把候选限制在永久免费线路内：任务能用免费模型就用（中文 → `glm-flash`），
 用不上就退到任一已配置的免费线路。适合批量、试跑、跑不要紧的活。
+
+## 五之一、三条待接线路的免费档白名单（2026-11-09 核验）
+
+`GROQ_API_KEY` / `MISTRAL_API_KEY` / `NVIDIA_API_KEY` 还没填，代码侧已就绪。
+没有 Key 就没法用真实调用验证默认模型，因此本日按厂商文档与免费档实测报告
+复核了三条线路的默认 ID，写进 `call_model.FREE_PLAN_MODELS` 并用测试锁住：
+
+| 线路 | 免费 Key 可调用的模型 | 默认 | 踩过的坑 |
+|---|---|---|---|
+| Groq | `openai/gpt-oss-120b`、`openai/gpt-oss-20b`、`qwen/qwen3.8-27b` | `openai/gpt-oss-120b` | `llama-3.3-70b-versatile` 已于 2026-08-16 退出免费档；免费 SKU 轮换频繁 |
+| Mistral | `open-mistral-nemo`、`open-mistral-7b`、`ministral-{3,8,14}b-latest`、`codestral-latest` | `open-mistral-nemo` | **`mistral-large-latest` 对免费 Key 返回 403「not available in your subscription tier」**；`mistral-small/medium` 的每分钟限额是 0 |
+| NVIDIA NIM | `openai/gpt-oss-120b`、`nvidia/nemotron-3-super-120b-a12b` 等目录内模型 | `openai/gpt-oss-120b` | 目录频繁变动，网上流传的不少 ID 并不存在；以 `/v1/models` 为准 |
+
+拿到 Key 后先扫描该账号**实际可见**的模型，再决定要不要调整默认值：
+
+```bash
+python scripts/check_provider.py --provider groq --scan
+python scripts/check_provider.py --provider mistral --scan
+python scripts/check_provider.py --provider nvidia --scan
+```
+
+> 三条线路目前仅缺 Key。填进 `.env` 后 `judge.configured_providers()` 会自动认到，
+> 自动路由随即把它们纳入候选，无需改任何代码。
 
 ## 五之二、免费线路的自愈（2026-11-09 起自动）
 

@@ -255,6 +255,23 @@ class FreeTierDefaultTests(unittest.TestCase):
             self.assertTrue(model, provider)
             self.assertNotIn("paid", model.lower(), provider)
 
+    def test_pending_free_lines_default_to_free_plan_models(self):
+        """Three lines still have no key; their defaults must be free SKUs."""
+        for provider in ("groq", "mistral", "nvidia"):
+            default = cm.PROVIDERS[provider][2]
+            self.assertIn(default, cm.FREE_PLAN_MODELS[provider],
+                          "%s default %r is not a verified free-plan model"
+                          % (provider, default))
+
+    def test_mistral_default_is_not_a_paid_tier_alias(self):
+        # A Mistral free key returns 403 "not available in your subscription
+        # tier" for Large / Medium / Small / Mixtral. This regression guard is
+        # the whole point of v1.6.8: never silently route to a paid SKU.
+        model = cm.PROVIDERS["mistral"][2]
+        for banned in ("mistral-large", "mistral-medium", "mistral-small",
+                       "mixtral", "magistral"):
+            self.assertNotIn(banned, model, model)
+
 
 if __name__ == "__main__":
     unittest.main()

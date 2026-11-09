@@ -5,7 +5,7 @@ description: 'Acts as a judge that classifies every incoming question by task ty
 description_zh: "把每个问题按任务类型自动分类，派发给当前最强的大模型（豆包/DeepSeek/Kimi/通义/智谱/混元/Gemini/GPT/Claude），并支持多模型对比与投票。"
 description_en: "Classify each question by task type and route it to the single best-fit model, with optional multi-model comparison and voting."
 category: productivity
-version: 1.6.7
+version: 1.6.8
 author: "小许 / Angela Yan"
 title: "AI 路由器 / AI Router"
 runtime: generic
@@ -185,8 +185,8 @@ providers, so the same command works once the key is in `.env`:
 | `glm-flash` | GLM-4.7-Flash 永久免费、无总量限制、200K | `ZHIPU_API_KEY` | `glm-4.7-flash` |
 | `siliconflow` | 新户约 2000 万 tokens；部分小模型免费 | `SILICONFLOW_API_KEY` | `Qwen/Qwen3-8B` |
 | `groq` | 30 RPM / 1000 次/天，速度最快 | `GROQ_API_KEY` | `openai/gpt-oss-120b` |
-| `openrouter` | 25+ 个 `:free` 模型，50 次/天 | `OPENROUTER_API_KEY` | `openrouter/free` |
-| `mistral` | Experiment 计划约 $10/月 | `MISTRAL_API_KEY` | `mistral-large-latest` |
+| `openrouter` | 25+ 个 `:free` 模型，50 次/天 | `OPENROUTER_API_KEY` | 运行时动态发现 `:free`（种子 `recursive/flint-v1.0:free`） |
+| `mistral` | 免绑卡免费层（约 1 req/s），仅开放权重模型 | `MISTRAL_API_KEY` | `open-mistral-nemo` |
 | `nvidia` | 全目录免费试原型，多数 40 RPM | `NVIDIA_API_KEY` | `openai/gpt-oss-120b` |
 | `custom` | 你自己的 vLLM / Ollama / 网关 | `AI_ROUTER_CUSTOM_API_KEY`（本地可空） | `AI_ROUTER_CUSTOM_MODEL` |
 
@@ -421,8 +421,9 @@ over version + provider set), the provider list, `config_ok` and `drift[]`. Set
 Check any deployment without spending money:
 
 ```bash
-python scripts/health_check.py --url http://127.0.0.1/health \
-    --expect-version 1.6.3 --expect-providers 16   # 0 ok · 1 drift · 2 unreachable
+# 远程先建 SSH 隧道（-L 18080:127.0.0.1:80）；服务器本机用 http://127.0.0.1/health
+python scripts/health_check.py --url http://127.0.0.1:18080/health \
+    --expect-version 1.6.8 --expect-providers 16   # 0 ok · 1 drift · 2 unreachable
 ```
 
 On the server, `scripts/server_deploy.py --zip /tmp/ai-router.zip` snapshots the
