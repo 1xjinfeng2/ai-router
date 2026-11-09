@@ -69,3 +69,4 @@
 
 - 2026-11-05 | 92f50bb | 新增自我更新（版本比对/脏工作区拦截/测试门+回滚），CI 矩阵 3.9/3.12 → 3.10/3.13 | 94 | 加密引导、投票加权、汇总流式
 - 2026-11-05 | 8390076 | 新增 HTTP 服务（server.py，鉴权/限流/体积上限）与自建模型 provider `custom`；ask.py 支持远端模式 | 114 | 服务端 SSE 流式、异步任务
+- 2026-11-09 | e1ad00e | 首次落库 PII 时一次性打印加密引导（`encryption_hint`/`maybe_hint_encryption`＋`--guide`，`AI_ROUTER_NO_TIPS=1` 静音，vault 旁 `.enc-hint` 标记；刻意不做 TTY 判断，让 agent 捕获的 stderr 能把提示带到人眼前），`.enc-hint` 同步排除出 git 与打包，版本 1.6.2→1.6.3 | 137 | 投票加权融合、汇总链路流式、服务端 SSE/异步、Ollama 接入
