@@ -7,6 +7,7 @@ import sys
 import unittest
 import urllib.error
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -271,6 +272,65 @@ class FreeTierDefaultTests(unittest.TestCase):
         for banned in ("mistral-large", "mistral-medium", "mistral-small",
                        "mixtral", "magistral"):
             self.assertNotIn(banned, model, model)
+
+
+class TotalTimeoutBudgetTests(unittest.TestCase):
+    """One call_text() must have a wall-clock cap, not per-hop timeouts."""
+
+    def test_total_timeout_reads_env_with_fallback(self):
+        old = os.environ.get("AI_ROUTER_TOTAL_TIMEOUT")
+        try:
+            os.environ["AI_ROUTER_TOTAL_TIMEOUT"] = "42"
+            self.assertEqual(cm.total_timeout(), 42)
+            os.environ["AI_ROUTER_TOTAL_TIMEOUT"] = "0"
+            self.assertEqual(cm.total_timeout(), 0)
+            os.environ["AI_ROUTER_TOTAL_TIMEOUT"] = "garbage"
+            self.assertEqual(cm.total_timeout(), cm.TOTAL_TIMEOUT_DEFAULT)
+        finally:
+            if old is None:
+                os.environ.pop("AI_ROUTER_TOTAL_TIMEOUT", None)
+            else:
+                os.environ["AI_ROUTER_TOTAL_TIMEOUT"] = old
+
+    def test_budget_clamps_per_call_timeout_and_stops_when_spent(self):
+        # Simulate: primary burns 100s of the 30s budget -> no fallback hop.
+        # call_with_retry is mocked so no network/time is actually involved.
+        ticks = iter([0.0, 0.0, 100.0, 100.0])
+        seen = []
+
+        def fake_call(prov, prompt, system, temperature, max_tokens, top_p,
+                      call_timeout, model=None, log=None, images=None):
+            seen.append((prov, call_timeout))
+            raise RuntimeError("timeout")
+
+        with mock.patch.object(cm.os.environ, "get",
+                               side_effect=lambda k, d=None:
+                               ("30" if k == "AI_ROUTER_TOTAL_TIMEOUT" else d)), \
+                mock.patch.object(cm.time, "monotonic", side_effect=lambda: next(ticks, 999.0)), \
+                mock.patch.object(cm, "call_with_retry", side_effect=fake_call), \
+                mock.patch.object(cm, "is_configured", return_value=True):
+            res = cm.call_text("th-flash", "x", allow_fallback=True)
+
+        self.assertIsNone(res["text"])
+        self.assertIn("total timeout budget", res["error"])
+        # Only the primary hop was attempted, and its timeout was clamped.
+        self.assertTrue(all(p == "th-flash" for p, _ in seen), seen)
+        self.assertEqual(seen[0][1], 30)
+
+    def test_no_cap_when_disabled(self):
+        # AI_ROUTER_TOTAL_TIMEOUT=0 keeps the original per-call timeout.
+        seen = []
+
+        def fake_call(prov, prompt, system, temperature, max_tokens, top_p,
+                      call_timeout, model=None, log=None, images=None):
+            seen.append(call_timeout)
+            raise RuntimeError("timeout")
+
+        with mock.patch.dict(cm.os.environ, {"AI_ROUTER_TOTAL_TIMEOUT": "0"}), \
+                mock.patch.object(cm, "call_with_retry", side_effect=fake_call), \
+                mock.patch.object(cm, "is_configured", return_value=True):
+            cm.call_text("th-flash", "x", timeout=90, allow_fallback=False)
+        self.assertEqual(seen, [90])
 
 
 if __name__ == "__main__":

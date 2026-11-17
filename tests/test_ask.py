@@ -2,6 +2,7 @@
 """Unit tests for ask.py (auto-route: classify -> pick best model)."""
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -133,6 +134,14 @@ class CliTests(unittest.TestCase):
 class RemoteModeTests(unittest.TestCase):
     """In client mode the server holds the keys, so files must travel inline."""
 
+    def setUp(self):
+        # answer() meters every call via _record(). Tests must never write to
+        # the user's real usage.db, or the health/cost reports get polluted
+        # with fake rows (see the openai/gpt-5.1 phantom calls of 2026-11-17).
+        p = mock.patch.object(ask, "_record")
+        p.start()
+        self.addCleanup(p.stop)
+
     def test_images_are_base64_encoded_before_sending(self):
         sent = {}
 
@@ -201,6 +210,12 @@ class PaidExclusionTests(unittest.TestCase):
 
 class ExplicitPaidProviderTests(unittest.TestCase):
     """An explicit --provider must still reach a paid model on deliberate use."""
+    def setUp(self):
+        # Never let a mocked "openai" answer be metered into the real DB.
+        p = mock.patch.object(ask, "_record")
+        p.start()
+        self.addCleanup(p.stop)
+
     def test_explicit_provider_overrides_paid_exclusion(self):
         fake = {"text": "x", "provider": "openai", "model": "gpt-5.1",
                 "error": None, "usage": {}, "attempted": [],
@@ -212,6 +227,37 @@ class ExplicitPaidProviderTests(unittest.TestCase):
         m.assert_called_once()
         self.assertEqual(m.call_args.args[0], "openai")
         self.assertEqual(res["provider"], "openai")
+
+
+class MeteringIsolationTests(unittest.TestCase):
+    """answer() must meter into usage.DB_PATH, never a hardcoded real DB.
+
+    Guards against the 2026-11-17 bug where mocked answers from unit tests were
+    written into the user's real usage.db as phantom paid-model calls.
+    """
+
+    def test_answer_meters_into_configured_db_not_the_real_one(self):
+        import usage
+        fake = {"text": "x", "provider": "doubao", "model": "doubao-seed-evolving",
+                "error": None, "usage": {"prompt_tokens": 5, "completion_tokens": 3,
+                                         "total_tokens": 8},
+                "attempted": [], "fallback_from": None}
+        old_db = usage.DB_PATH
+        with tempfile.TemporaryDirectory() as d:
+            usage.DB_PATH = Path(d) / "isolated_usage.db"
+            try:
+                with mock.patch.object(call_model, "call_text", return_value=fake), \
+                        mock.patch.object(judge, "configured_providers",
+                                          return_value={"doubao"}):
+                    ask.answer("hi")
+                con = sqlite3.connect(usage.DB_PATH)
+                try:
+                    rows = con.execute("SELECT provider, model, total_tokens FROM calls").fetchall()
+                finally:
+                    con.close()
+                self.assertEqual(rows, [("doubao", "doubao-seed-evolving", 8)])
+            finally:
+                usage.DB_PATH = old_db
 
 
 if __name__ == "__main__":

@@ -419,6 +419,22 @@ REASONING_FLOOR = {
 }
 EMPTY_BODY_RETRY_CAP = 8192  # never auto-expand beyond this
 
+# A single answer may walk several fallback hops, each retrying with backoff
+# and an empty-body re-try. Without a wall-clock cap that compounds to minutes
+# (a real 234s request was observed 2026-11-12). This is the hard ceiling for
+# the whole call_text() call, independent of the per-request ``timeout``.
+TOTAL_TIMEOUT_DEFAULT = 150
+MIN_CALL_TIMEOUT = 5  # do not start a network call with less than this
+
+
+def total_timeout():
+    """Wall-clock budget (seconds) for one call_text(), 0 disables the cap."""
+    try:
+        return max(0, int(os.environ.get("AI_ROUTER_TOTAL_TIMEOUT",
+                                         TOTAL_TIMEOUT_DEFAULT)))
+    except (TypeError, ValueError):
+        return TOTAL_TIMEOUT_DEFAULT
+
 
 def effective_max_tokens(provider, requested):
     """Apply the reasoning-model floor so we do not get empty bodies."""
@@ -561,6 +577,21 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
     """
     log = log or (lambda m: None)
     chain = [provider]
+    # Wall-clock budget for the ENTIRE call. Per-attempt `timeout` is clamped to
+    # whatever is left, so retries + backoff + fallback hops cannot compound
+    # into a multi-minute hang. Set AI_ROUTER_TOTAL_TIMEOUT=0 to opt out.
+    budget_s = total_timeout()
+    deadline = time.monotonic() + budget_s if budget_s else None
+
+    def remaining():
+        """Seconds left in the global budget, or None when uncapped."""
+        if deadline is None:
+            return timeout
+        left = deadline - time.monotonic()
+        if left < MIN_CALL_TIMEOUT:
+            return 0
+        return min(timeout, int(left))
+
     try:
         import free_lines
     except ImportError:  # pragma: no cover
@@ -587,12 +618,19 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
         if idx > 0 and prov in skip:
             log(f"skip fallback '{prov}': marked unavailable in AI_ROUTER_SKIP_PROVIDERS")
             continue
+        # Stop before opening a new hop if the global budget is spent.
+        call_timeout = remaining()
+        if not call_timeout:
+            last_err = (f"total timeout budget exhausted ({budget_s}s) "
+                        f"before trying '{prov}'")
+            log(last_err)
+            break
         # Fallbacks get the same reasoning-aware budget as their own floor.
         prov_budget = effective_max_tokens(prov, budget)
         attempted.append(prov)
         try:
             resp, used_model, tries, errs = call_with_retry(
-                prov, prompt, system, temperature, prov_budget, top_p, timeout,
+                prov, prompt, system, temperature, prov_budget, top_p, call_timeout,
                 model=None, log=log, images=images)
         except Exception as e:  # noqa: BLE001
             status, retryable, detail = classify_error(e)
@@ -613,16 +651,20 @@ def call_text(provider, prompt, system=None, temperature=None, max_tokens=2048,
                 f"{' (reasoning_content only)' if reasoning_only else ''} "
                 f"-> retry once at {bigger}")
             empty_retry = True
-            try:
-                resp2, used_model, tries2, _ = call_with_retry(
-                    prov, prompt, system, temperature, bigger, top_p, timeout,
-                    model=None, log=log, images=images)
-                text2 = (extract_text(resp2, PROVIDERS[prov][3]) or "").strip()
-                if text2:
-                    text, resp, u = text2, resp2, extract_usage(resp2, PROVIDERS[prov][3])
-            except Exception as e:  # noqa: BLE001
-                status, _r, detail = classify_error(e)
-                log(f"{prov}: empty-body retry failed: {detail}")
+            retry_timeout = remaining()
+            if retry_timeout:
+                try:
+                    resp2, used_model, tries2, _ = call_with_retry(
+                        prov, prompt, system, temperature, bigger, top_p, retry_timeout,
+                        model=None, log=log, images=images)
+                    text2 = (extract_text(resp2, PROVIDERS[prov][3]) or "").strip()
+                    if text2:
+                        text, resp, u = text2, resp2, extract_usage(resp2, PROVIDERS[prov][3])
+                except Exception as e:  # noqa: BLE001
+                    status, _r, detail = classify_error(e)
+                    log(f"{prov}: empty-body retry failed: {detail}")
+            else:
+                log(f"{prov}: skip empty-body retry, global budget exhausted")
         if not text:
             # Never count an empty body as success: hidden thinking is not an
             # answer. Writing a non-None error is what lets usage.health() and
