@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for deployment-drift detection and the post-deploy smoke gate."""
 import io
+import os
 import sys
 import unittest
 from contextlib import redirect_stdout
@@ -70,7 +71,25 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(hc.expectations(env), {"version": "1.6.4", "providers": 16})
 
 
-class CLITests(unittest.TestCase):
+class _CleanExpectEnvTests(unittest.TestCase):
+    """main() reads AI_ROUTER_EXPECT_* from os.environ unless isolated.
+
+    On a deployed host systemd injects AI_ROUTER_EXPECT_VERSION=1.6.9; without
+    clearing it these tests would compare CLI expectations against the host's
+    deployment expectations and fail for environmental reasons. Keep tests
+    hermetic so they pass identically on a dev box and on a live server.
+    """
+
+    def setUp(self):
+        self._env_patch = mock.patch.dict(os.environ, {}, clear=False)
+        self._env_patch.start()
+        for key in ("AI_ROUTER_EXPECT_VERSION", "AI_ROUTER_EXPECT_PROVIDERS",
+                    "AI_ROUTER_EXPECT_CONFIG_HASH"):
+            os.environ.pop(key, None)
+        self.addCleanup(self._env_patch.stop)
+
+
+class CLITests(_CleanExpectEnvTests):
     def test_unreachable_returns_2(self):
         with mock.patch.object(hc, "fetch", return_value=(None, "boom")):
             with redirect_stdout(io.StringIO()):
@@ -99,7 +118,7 @@ class CLITests(unittest.TestCase):
                 self.assertEqual(hc.main([]), hc.EXIT_DRIFT)
 
 
-class SmokeGateTests(unittest.TestCase):
+class SmokeGateTests(_CleanExpectEnvTests):
     """A failed smoke test must roll the code back, just like a failed unit test."""
 
     def test_smoke_success(self):
